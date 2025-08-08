@@ -1,15 +1,20 @@
+
 """Sensor platform for Powerwall Dashboard Energy Import."""
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
-from homeassistant.components.sensor import SensorEntity
+from homeassistant.components.sensor import (
+    SensorEntity,
+    SensorDeviceClass,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
-    POWER_KILO_WATT,
-    ENERGY_KILO_WATT_HOUR,
+    UnitOfPower,
+    UnitOfEnergy,
     PERCENTAGE,
 )
 from homeassistant.core import HomeAssistant
@@ -20,25 +25,25 @@ from .influx_client import InfluxClient
 
 _LOGGER = logging.getLogger(__name__)
 
-SCAN_INTERVAL = 60  # seconds
+SCAN_INTERVAL = timedelta(seconds=60)
 
 # (entity_id_suffix, Friendly Name, field, unit, mode, icon, device_class, state_class)
 SENSOR_DEFINITIONS = [
     # kWh totals (Teslemetry-style since midnight)
-    ("battery_charged", "Battery Charged", "to_pw", ENERGY_KILO_WATT_HOUR, "pos", "mdi:battery-arrow-up", "energy", "total"),
-    ("battery_discharged", "Battery Discharged", "from_pw", ENERGY_KILO_WATT_HOUR, "pos", "mdi:battery-arrow-down", "energy", "total"),
-    ("grid_exported", "Grid Exported", "to_grid", ENERGY_KILO_WATT_HOUR, "pos", "mdi:transmission-tower-export", "energy", "total"),
-    ("grid_imported", "Grid Imported", "from_grid", ENERGY_KILO_WATT_HOUR, "pos", "mdi:transmission-tower-import", "energy", "total"),
-    ("home_usage", "Home Usage", "home", ENERGY_KILO_WATT_HOUR, "pos", "mdi:home-lightning-bolt", "energy", "total"),
-    ("solar_generated", "Solar Generated", "solar", ENERGY_KILO_WATT_HOUR, "pos", "mdi:solar-power-variant", "energy", "total"),
+    ("battery_charged", "Battery Charged", "to_pw", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:battery-arrow-up", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("battery_discharged", "Battery Discharged", "from_pw", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:battery-arrow-down", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("grid_exported", "Grid Exported", "to_grid", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:transmission-tower-export", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("grid_imported", "Grid Imported", "from_grid", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:transmission-tower-import", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("home_usage", "Home Usage", "home", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:home-lightning-bolt", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("solar_generated", "Solar Generated", "solar", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:solar-power-variant", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
     # Instantaneous kW
-    ("battery_power", "Battery Power", "to_pw", POWER_KILO_WATT, "last", "mdi:battery-charging", "power", "measurement"),
-    ("grid_power", "Grid Power", "from_grid", POWER_KILO_WATT, "last", "mdi:transmission-tower", "power", "measurement"),
-    ("load_power", "Load Power", "home", POWER_KILO_WATT, "last", "mdi:home-lightning-bolt", "power", "measurement"),
-    ("solar_power", "Solar Power", "solar", POWER_KILO_WATT, "last", "mdi:solar-power", "power", "measurement"),
+    ("battery_power", "Battery Power", "to_pw", UnitOfPower.KILO_WATT, "last", "mdi:battery-charging", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("grid_power", "Grid Power", "from_grid", UnitOfPower.KILO_WATT, "last", "mdi:transmission-tower", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("load_power", "Load Power", "home", UnitOfPower.KILO_WATT, "last", "mdi:home-lightning-bolt", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("solar_power", "Solar Power", "solar", UnitOfPower.KILO_WATT, "last", "mdi:solar-power", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     # Percentage
-    ("percentage_charged", "Battery % Charged", "percentage", PERCENTAGE, "last", "mdi:battery-high", "battery", "measurement"),
-    # States
+    ("percentage_charged", "Battery % Charged", "percentage", PERCENTAGE, "last", "mdi:battery-high", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT),
+    # States (no device/state class)
     ("battery_state", "Tesla Battery State", "to_pw", None, "state_battery", "mdi:battery-heart-variant", None, None),
     ("grid_state", "Tesla Power Grid State", "from_grid", None, "state_grid", "mdi:transmission-tower", None, None),
     ("island_status", "Island Status", "ISLAND_GridConnected_bool", None, "state_island", "mdi:earth", None, None),
@@ -59,7 +64,7 @@ class PowerwallDashboardSensor(SensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, influx: InfluxClient, sensor_id: str, name: str, field: str, unit, mode: str, icon: str | None, device_class: str | None, state_class: str | None):
+    def __init__(self, influx: InfluxClient, sensor_id: str, name: str, field: str, unit, mode: str, icon: str | None, device_class, state_class) -> None:
         self._influx = influx
         self._field = field
         self._mode = mode
