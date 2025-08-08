@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to InfluxDB",
+        "description": "Enter your InfluxDB connection details.",
+        "data": {
+          "host": "Host",
+          "port": "Port",
+          "database": "Database Name",
+          "username": "Username",
+          "password": "Password"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+DOMAIN = "powerwall_dashboard_energy_import"
+CONF_HOST = "host"
+CONF_PORT = "port"
+CONF_DB_NAME = "database"
+CONF_USERNAME = "username"
+CONF_PASSWORD = "password"

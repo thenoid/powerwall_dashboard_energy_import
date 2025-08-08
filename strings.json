@@ -1,0 +1,10 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to InfluxDB",
+        "description": "Enter your InfluxDB connection details."
+      }
+    }
+  }
+}
