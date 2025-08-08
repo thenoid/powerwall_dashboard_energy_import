@@ -9,7 +9,6 @@
     "@thenoid"
   ],
   "config_flow": true,
-  "version": "0.2.1",
-  "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/thenoid/powerwall_dashboard_energy_import/issues"
+  "version": "0.3.0",
+  "iot_class": "local_polling"
 }

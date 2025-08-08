@@ -1,13 +1,18 @@
-"""Config flow for Powerwall Dashboard Energy Import integration."""
 
+"""Config & Options flow for Powerwall Dashboard Energy Import integration."""
 from __future__ import annotations
-import voluptuous as vol
 
+import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResult
 
-from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD
+from .const import (
+    DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
+    OPT_DAY_MODE, OPT_SERIES_SOURCE, OPT_CQ_TZ,
+    DEFAULT_DAY_MODE, DEFAULT_SERIES_SOURCE, DEFAULT_CQ_TZ,
+)
+from .influx_client import InfluxClient
 
 DATA_SCHEMA = vol.Schema({
     vol.Required(CONF_HOST): str,
@@ -23,10 +28,38 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input=None) -> FlowResult:
-        """Handle the initial step."""
         errors = {}
         if user_input is not None:
-            # TODO: Validate InfluxDB connection here
-            return self.async_create_entry(title="Powerwall Dashboard Energy Import", data=user_input)
-
+            if not await self._async_test_connection(self.hass, user_input):
+                errors["base"] = "cannot_connect"
+            else:
+                return self.async_create_entry(title="Powerwall Dashboard Energy Import", data=user_input)
         return self.async_show_form(step_id="user", data_schema=DATA_SCHEMA, errors=errors)
+
+    async def _async_test_connection(self, hass: HomeAssistant, data: dict) -> bool:
+        client = InfluxClient(
+            data[CONF_HOST], data[CONF_PORT], data.get(CONF_USERNAME), data.get(CONF_PASSWORD), data[CONF_DB_NAME]
+        )
+        return await hass.async_add_executor_job(client.connect)
+
+class OptionsFlowHandler(config_entries.OptionsFlow):
+    """Handle options for the integration."""
+    def __init__(self, entry: config_entries.ConfigEntry) -> None:
+        self.entry = entry
+
+    async def async_step_init(self, user_input=None):
+        return await self.async_step_main(user_input)
+
+    async def async_step_main(self, user_input=None):
+        if user_input is not None:
+            return self.async_create_entry(title="Options", data=user_input)
+
+        current = self.entry.options
+        schema = vol.Schema({
+            vol.Required(OPT_DAY_MODE, default=current.get(OPT_DAY_MODE, DEFAULT_DAY_MODE)):
+                vol.In(["local_midnight", "rolling_24h", "influx_daily_cq"]),
+            vol.Required(OPT_SERIES_SOURCE, default=current.get(OPT_SERIES_SOURCE, DEFAULT_SERIES_SOURCE)):
+                vol.In(["autogen.http", "raw.http"]),
+            vol.Required(OPT_CQ_TZ, default=current.get(OPT_CQ_TZ, DEFAULT_CQ_TZ)): str,
+        })
+        return self.async_show_form(step_id="main", data_schema=schema)

@@ -1,12 +1,14 @@
+
 """Powerwall Dashboard Energy Import integration."""
 from __future__ import annotations
 
 import logging
-from homeassistant.config_entries import ConfigEntry
+from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.core import HomeAssistant
 
 from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD
 from .influx_client import InfluxClient
+from .config_flow import OptionsFlowHandler
 
 PLATFORMS: list[str] = ["sensor"]
 
@@ -41,3 +43,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         if store and (client := store.get("client")):
             await hass.async_add_executor_job(client.close)
     return unload_ok
+
+async def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
+    return OptionsFlowHandler(entry)
