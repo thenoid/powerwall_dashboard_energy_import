@@ -21,34 +21,37 @@ from .const import (
     OPT_DAY_MODE, OPT_SERIES_SOURCE, OPT_CQ_TZ,
     DEFAULT_DAY_MODE, DEFAULT_SERIES_SOURCE, DEFAULT_CQ_TZ,
 )
-
 from .influx_client import InfluxClient
 
 _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=60)
 
-# (entity_id_suffix, Friendly Name, field, mode, unit, icon, device_class, state_class)
-SENSOR_DEFINITIONS = [
-    # kWh totals (Teslemetry-style since midnight)
-    ("battery_charged", "Battery Charged", "to_pw", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:battery-arrow-up", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("battery_discharged", "Battery Discharged", "from_pw", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:battery-arrow-down", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("grid_exported", "Grid Exported", "to_grid", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("grid_imported", "Grid Imported", "from_grid", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-import", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("home_usage", "Home Usage", "home", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:home-lightning-bolt", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("solar_generated", "Solar Generated", "solar", "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, "mdi:solar-power-variant", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    # Instantaneous kW
+def kwh_defs(suffix_base: str, field: str, icon: str):
+    name_base = {
+        "home": "Home Usage",
+        "solar": "Solar Generated",
+        "from_grid": "Grid Imported",
+        "to_grid": "Grid Exported",
+        "from_pw": "Battery Discharged",
+        "to_pw": "Battery Charged",
+    }[field]
+    return [
+        (f"{suffix_base}", name_base, field, "kwh_total", UnitOfEnergy.KILO_WATT_HOUR, icon, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+        (f"{suffix_base}_daily", f"{name_base} (Daily)", field, "kwh_daily", UnitOfEnergy.KILO_WATT_HOUR, icon, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+        (f"{suffix_base}_monthly", f"{name_base} (Monthly)", field, "kwh_monthly", UnitOfEnergy.KILO_WATT_HOUR, icon, SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ]
+
+SENSOR_DEFINITIONS = []   + kwh_defs("home_usage", "home", "mdi:home-lightning-bolt")   + kwh_defs("solar_generated", "solar", "mdi:solar-power-variant")   + kwh_defs("grid_imported", "from_grid", "mdi:transmission-tower-import")   + kwh_defs("grid_exported", "to_grid", "mdi:transmission-tower-export")   + kwh_defs("battery_discharged", "from_pw", "mdi:battery-arrow-down")   + kwh_defs("battery_charged", "to_pw", "mdi:battery-arrow-up")   + [
     ("battery_power", "Battery Power", "battery_combo", "last_kw_combo_battery", UnitOfPower.KILO_WATT, "mdi:battery-charging", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("grid_power", "Grid Power", "grid_combo", "last_kw_combo_grid", UnitOfPower.KILO_WATT, "mdi:transmission-tower", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("load_power", "Load Power", "home", "last_kw", UnitOfPower.KILO_WATT, "mdi:home-lightning-bolt", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     ("solar_power", "Solar Power", "solar", "last_kw", UnitOfPower.KILO_WATT, "mdi:solar-power", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
-    # Percentage
     ("percentage_charged", "Battery % Charged", "percentage", "last", PERCENTAGE, "mdi:battery-high", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT),
-    # States (no device/state class)
     ("battery_state", "Tesla Battery State", "to_pw", "state_battery", None, "mdi:battery-heart-variant", None, None),
     ("grid_state", "Tesla Power Grid State", "from_grid", "state_grid", None, "mdi:transmission-tower", None, None),
     ("island_status", "Island Status", "ISLAND_GridConnected_bool", "state_island", None, "mdi:earth", None, None),
-]
+  ]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     store = hass.data[DOMAIN][entry.entry_id]
@@ -101,25 +104,22 @@ class PowerwallDashboardSensor(SensorEntity):
         day_mode = self._day_mode()
         series = self._series_source()
 
-        # Instantaneous power logic (kW) unaffected by options
+        # Instantaneous power (kW)
         if self._mode == "last_kw":
-            query = f"SELECT LAST({self._field}) AS value FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST({self._field}) AS value FROM {series}")
             val = pts[0].get('value', 0.0) if pts else 0.0
             self._attr_native_value = round((val or 0.0) / 1000.0, 3)
             return
 
         if self._mode == "last_kw_combo_battery":
-            query = f"SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM {series}")
             chg = (pts[0].get("chg") if pts else 0) or 0
             dis = (pts[0].get("dis") if pts else 0) or 0
             self._attr_native_value = round(max(chg, dis) / 1000.0, 3)
             return
 
         if self._mode == "last_kw_combo_grid":
-            query = f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}")
             exp = (pts[0].get("exp") if pts else 0) or 0
             imp = (pts[0].get("imp") if pts else 0) or 0
             self._attr_native_value = round(max(exp, imp) / 1000.0, 3)
@@ -127,65 +127,78 @@ class PowerwallDashboardSensor(SensorEntity):
 
         # Percentage
         if self._mode == "last" and self._field == "percentage":
-            query = f"SELECT LAST(percentage) AS value FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST(percentage) AS value FROM {series}")
             self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
             return
 
         # States
         if self._mode == "state_battery":
-            query = f"SELECT LAST(to_pw) AS charge, LAST(from_pw) AS discharge FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST(to_pw) AS charge, LAST(from_pw) AS discharge FROM {series}")
             chg = (pts[0].get("charge") if pts else 0) or 0
             dis = (pts[0].get("discharge") if pts else 0) or 0
             self._attr_native_value = "Charging" if chg > 0 else ("Discharging" if dis > 0 else "Idle")
             return
 
         if self._mode == "state_grid":
-            query = f"SELECT LAST(to_grid) AS export, LAST(from_grid) AS import FROM {series}"
-            pts = self._influx.query(query)
+            pts = self._influx.query(f"SELECT LAST(to_grid) AS export, LAST(from_grid) AS import FROM {series}")
             exp = (pts[0].get("export") if pts else 0) or 0
             imp = (pts[0].get("import") if pts else 0) or 0
             self._attr_native_value = "Producing" if exp > 0 else ("Consuming" if imp > 0 else "Idle")
             return
 
         if self._mode == "state_island":
-            # Island flag is maintained by a CQ in the 'grid' RP
-            query = "SELECT LAST(ISLAND_GridConnected_bool) AS val FROM grid.http"
-            pts = self._influx.query(query)
+            pts = self._influx.query("SELECT LAST(ISLAND_GridConnected_bool) AS val FROM grid.http")
             val = (pts[0].get("val") if pts else None)
             self._attr_native_value = "Unknown" if val is None else ("On-grid" if bool(val) else "Off-grid")
             return
 
-        # kWh totals with selectable day boundary/source
+        # kWh general 'today' per options
         if self._mode == "kwh_total":
             if day_mode == "local_midnight":
                 midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
                 since_iso = midnight_local.astimezone(timezone.utc).isoformat()
-                query = (
-                    f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
-                    f"WHERE time >= '{since_iso}' AND {self._field} > 0"
-                )
-                pts = self._influx.query(query)
+                q = f"SELECT integral({self._field})/1000/3600 AS value FROM {series} WHERE time >= '{since_iso}' AND {self._field} > 0"
+                pts = self._influx.query(q)
                 self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
                 return
-
             if day_mode == "rolling_24h":
-                query = (
-                    f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
-                    f"WHERE time >= now() - 24h AND {self._field} > 0"
-                )
-                pts = self._influx.query(query)
+                q = f"SELECT integral({self._field})/1000/3600 AS value FROM {series} WHERE time >= now() - 24h AND {self._field} > 0"
+                pts = self._influx.query(q)
                 self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
                 return
-
             if day_mode == "influx_daily_cq":
-                # Use pre-aggregated daily sum from RP 'daily' (CQ already applies TZ)
-                # We'll fetch LAST() for today.
-                query = "SELECT LAST(%s) AS value FROM daily.http" % self._field
-                pts = self._influx.query(query)
+                pts = self._influx.query("SELECT LAST(%s) AS value FROM daily.http" % self._field)
                 self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
                 return
 
-        # If nothing matched
+        # kWh baked-in Daily
+        if self._mode == "kwh_daily":
+            if day_mode == "influx_daily_cq":
+                pts = self._influx.query("SELECT LAST(%s) AS value FROM daily.http" % self._field)
+                self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
+                return
+            midnight_local = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+            since_iso = midnight_local.astimezone(timezone.utc).isoformat()
+            q = f"SELECT integral({self._field})/1000/3600 AS value FROM {series} WHERE time >= '{since_iso}' AND {self._field} > 0"
+            pts = self._influx.query(q)
+            self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
+            return
+
+        # kWh baked-in Monthly
+        if self._mode == "kwh_monthly":
+            if day_mode == "influx_daily_cq":
+                now_local = datetime.now().astimezone()
+                month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+                since_iso = month_start_local.astimezone(timezone.utc).isoformat()
+                pts = self._influx.query("SELECT SUM(%s) AS value FROM daily.http WHERE time >= '%s'" % (self._field, since_iso))
+                self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
+                return
+            now_local = datetime.now().astimezone()
+            month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            since_iso = month_start_local.astimezone(timezone.utc).isoformat()
+            q = f"SELECT integral({self._field})/1000/3600 AS value FROM {series} WHERE time >= '{since_iso}' AND {self._field} > 0"
+            pts = self._influx.query(q)
+            self._attr_native_value = round(pts[0].get('value', 0.0), 3) if pts else 0.0
+            return
+
         self._attr_native_value = None
