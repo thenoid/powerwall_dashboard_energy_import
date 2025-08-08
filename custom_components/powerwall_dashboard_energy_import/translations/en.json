@@ -12,6 +12,9 @@
           "password": "Password"
         }
       }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to InfluxDB. Please check your host, port, username, password, and database name."
     }
   }
 }

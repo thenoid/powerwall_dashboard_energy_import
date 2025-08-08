@@ -1,0 +1,5 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+select = ["E","F","W","I","UP"]
+ignore = ["E501"]  # allow longer lines where helpful

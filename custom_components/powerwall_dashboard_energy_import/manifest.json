@@ -1,0 +1,14 @@
+{
+  "domain": "powerwall_dashboard_energy_import",
+  "name": "Powerwall Dashboard Energy Import",
+  "documentation": "https://github.com/thenoid/powerwall_dashboard_energy_import",
+  "requirements": [
+    "influxdb==5.3.1"
+  ],
+  "codeowners": [
+    "@thenoid"
+  ],
+  "config_flow": true,
+  "version": "0.0.2",
+  "iot_class": "local_polling"
+}
