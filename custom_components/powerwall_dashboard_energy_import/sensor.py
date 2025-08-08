@@ -27,26 +27,26 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=60)
 
-# (entity_id_suffix, Friendly Name, field, unit, mode, icon, device_class, state_class)
+# (entity_id_suffix, Friendly Name, field, mode, unit, icon, device_class, state_class)
 SENSOR_DEFINITIONS = [
     # kWh totals (Teslemetry-style since midnight)
-    ("battery_charged", "Battery Charged", "to_pw", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:battery-arrow-up", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("battery_discharged", "Battery Discharged", "from_pw", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:battery-arrow-down", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("grid_exported", "Grid Exported", "to_grid", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:transmission-tower-export", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("grid_imported", "Grid Imported", "from_grid", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:transmission-tower-import", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("home_usage", "Home Usage", "home", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:home-lightning-bolt", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
-    ("solar_generated", "Solar Generated", "solar", UnitOfEnergy.KILO_WATT_HOUR, "pos", "mdi:solar-power-variant", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("battery_charged", "Battery Charged", "to_pw", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:battery-arrow-up", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("battery_discharged", "Battery Discharged", "from_pw", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:battery-arrow-down", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("grid_exported", "Grid Exported", "to_grid", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-export", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("grid_imported", "Grid Imported", "from_grid", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:transmission-tower-import", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("home_usage", "Home Usage", "home", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:home-lightning-bolt", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
+    ("solar_generated", "Solar Generated", "solar", "pos", UnitOfEnergy.KILO_WATT_HOUR, "mdi:solar-power-variant", SensorDeviceClass.ENERGY, SensorStateClass.TOTAL),
     # Instantaneous kW
-    ("battery_power", "Battery Power", "to_pw", UnitOfPower.KILO_WATT, "last", "mdi:battery-charging", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
-    ("grid_power", "Grid Power", "from_grid", UnitOfPower.KILO_WATT, "last", "mdi:transmission-tower", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
-    ("load_power", "Load Power", "home", UnitOfPower.KILO_WATT, "last", "mdi:home-lightning-bolt", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
-    ("solar_power", "Solar Power", "solar", UnitOfPower.KILO_WATT, "last", "mdi:solar-power", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("battery_power", "Battery Power", "battery_combo", "last_kw_combo_battery", UnitOfPower.KILO_WATT, "mdi:battery-charging", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("grid_power", "Grid Power", "grid_combo", "last_kw_combo_grid", UnitOfPower.KILO_WATT, "mdi:transmission-tower", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("load_power", "Load Power", "home", "last_kw", UnitOfPower.KILO_WATT, "mdi:home-lightning-bolt", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
+    ("solar_power", "Solar Power", "solar", "last_kw", UnitOfPower.KILO_WATT, "mdi:solar-power", SensorDeviceClass.POWER, SensorStateClass.MEASUREMENT),
     # Percentage
-    ("percentage_charged", "Battery % Charged", "percentage", PERCENTAGE, "last", "mdi:battery-high", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT),
+    ("percentage_charged", "Battery % Charged", "percentage", "last", PERCENTAGE, "mdi:battery-high", SensorDeviceClass.BATTERY, SensorStateClass.MEASUREMENT),
     # States (no device/state class)
-    ("battery_state", "Tesla Battery State", "to_pw", None, "state_battery", "mdi:battery-heart-variant", None, None),
-    ("grid_state", "Tesla Power Grid State", "from_grid", None, "state_grid", "mdi:transmission-tower", None, None),
-    ("island_status", "Island Status", "ISLAND_GridConnected_bool", None, "state_island", "mdi:earth", None, None),
+    ("battery_state", "Tesla Battery State", "to_pw", "state_battery", None, "mdi:battery-heart-variant", None, None),
+    ("grid_state", "Tesla Power Grid State", "from_grid", "state_grid", None, "mdi:transmission-tower", None, None),
+    ("island_status", "Island Status", "ISLAND_GridConnected_bool", "state_island", None, "mdi:earth", None, None),
 ]
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -55,8 +55,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
     client: InfluxClient = store["client"]
 
     entities = []
-    for sensor_id, name, field, unit, mode, icon, device_class, state_class in SENSOR_DEFINITIONS:
-        entities.append(PowerwallDashboardSensor(client, sensor_id, name, field, unit, mode, icon, device_class, state_class))
+    for sensor_id, name, field, mode, unit, icon, device_class, state_class in SENSOR_DEFINITIONS:
+        entities.append(PowerwallDashboardSensor(client, sensor_id, name, field, mode, unit, icon, device_class, state_class))
     async_add_entities(entities, True)
 
 class PowerwallDashboardSensor(SensorEntity):
@@ -64,10 +64,11 @@ class PowerwallDashboardSensor(SensorEntity):
 
     _attr_has_entity_name = True
 
-    def __init__(self, influx: InfluxClient, sensor_id: str, name: str, field: str, unit, mode: str, icon: str | None, device_class, state_class) -> None:
+    def __init__(self, influx: InfluxClient, sensor_id: str, name: str, field: str, mode: str, unit, icon: str | None, device_class, state_class) -> None:
         self._influx = influx
         self._field = field
         self._mode = mode
+        self._key = sensor_id
 
         self._attr_unique_id = f"powerwall_dashboard_{sensor_id}"
         self._attr_name = name
@@ -87,7 +88,6 @@ class PowerwallDashboardSensor(SensorEntity):
 
     def update(self) -> None:
         """Fetch new state data from InfluxDB."""
-        # Midnight in local tz → converted to UTC for InfluxQL
         today_local_midnight = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
         midnight_utc_iso = today_local_midnight.astimezone(timezone.utc).isoformat()
 
@@ -98,15 +98,36 @@ class PowerwallDashboardSensor(SensorEntity):
                 f"WHERE time >= '{midnight_utc_iso}' AND {self._field} > 0"
             )
             points = self._influx.query(query)
-            self._attr_native_value = round(points[0]['value'], 3) if points and 'value' in points[0] else 0.0
+            self._attr_native_value = round(points[0].get('value', 0.0), 3) if points else 0.0
 
-        elif self._mode == "last":  # latest instantaneous value
+        elif self._mode == "last":  # latest instantaneous value (raw unit)
             query = f"SELECT LAST({self._field}) AS value FROM autogen.http"
             points = self._influx.query(query)
-            self._attr_native_value = round(points[0]['value'], 3) if points and 'value' in points[0] else 0.0
+            self._attr_native_value = round(points[0].get('value', 0.0), 3) if points else 0.0
+
+        elif self._mode == "last_kw":  # latest instantaneous power in kW (field is in watts)
+            query = f"SELECT LAST({self._field}) AS value FROM autogen.http"
+            points = self._influx.query(query)
+            val = points[0].get('value', 0.0) if points else 0.0
+            self._attr_native_value = round((val or 0.0) / 1000.0, 3)
+
+        elif self._mode == "last_kw_combo_battery":
+            # Use magnitude regardless of direction: max(to_pw, from_pw) / 1000
+            query = "SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM autogen.http"
+            points = self._influx.query(query)
+            chg = (points[0].get("chg") if points else 0) or 0
+            dis = (points[0].get("dis") if points else 0) or 0
+            self._attr_native_value = round(max(chg, dis) / 1000.0, 3)
+
+        elif self._mode == "last_kw_combo_grid":
+            # Use magnitude regardless of direction: max(to_grid, from_grid) / 1000
+            query = "SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM autogen.http"
+            points = self._influx.query(query)
+            exp = (points[0].get("exp") if points else 0) or 0
+            imp = (points[0].get("imp") if points else 0) or 0
+            self._attr_native_value = round(max(exp, imp) / 1000.0, 3)
 
         elif self._mode == "state_battery":
-            # Determine state from charging/discharging instantaneous values
             query = "SELECT LAST(to_pw) AS charge, LAST(from_pw) AS discharge FROM autogen.http"
             points = self._influx.query(query)
             chg = (points[0].get("charge") if points else 0) or 0
@@ -131,7 +152,6 @@ class PowerwallDashboardSensor(SensorEntity):
                 self._attr_native_value = "Idle"
 
         elif self._mode == "state_island":
-            # grid connection flag rolled into grid RP via CQ
             query = "SELECT LAST(ISLAND_GridConnected_bool) AS val FROM grid.http"
             points = self._influx.query(query)
             val = (points[0].get("val") if points else None)
