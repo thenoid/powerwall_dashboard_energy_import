@@ -17,9 +17,8 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
-    DOMAIN,
-    OPT_DAY_MODE, OPT_SERIES_SOURCE, OPT_CQ_TZ,
-    DEFAULT_DAY_MODE, DEFAULT_SERIES_SOURCE, DEFAULT_CQ_TZ,
+    DOMAIN, CONF_PW_NAME, DEFAULT_PW_NAME,
+    OPT_DAY_MODE, OPT_SERIES_SOURCE,
 )
 from .influx_client import InfluxClient
 
@@ -56,13 +55,17 @@ SENSOR_DEFINITIONS = []   + kwh_defs("home_usage", "home", "mdi:home-lightning-b
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
     store = hass.data[DOMAIN][entry.entry_id]
     client: InfluxClient = store["client"]
+    # Prefer options name, fall back to data, then default
+    pw_name: str = entry.options.get(CONF_PW_NAME) if entry.options else None
+    if not pw_name:
+        pw_name = entry.data.get(CONF_PW_NAME, DEFAULT_PW_NAME)
     options = entry.options or {}
 
     entities = []
     for sensor_id, name, field, mode, unit, icon, device_class, state_class in SENSOR_DEFINITIONS:
         entities.append(
             PowerwallDashboardSensor(
-                client, options, sensor_id, name, field, mode, unit, icon, device_class, state_class
+                client, options, pw_name, sensor_id, name, field, mode, unit, icon, device_class, state_class
             )
         )
     async_add_entities(entities, True)
@@ -70,11 +73,12 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
 class PowerwallDashboardSensor(SensorEntity):
     _attr_has_entity_name = True
 
-    def __init__(self, influx: InfluxClient, options: dict, sensor_id: str, name: str, field: str, mode: str, unit, icon: str | None, device_class, state_class) -> None:
+    def __init__(self, influx: InfluxClient, options: dict, device_name: str, sensor_id: str, name: str, field: str, mode: str, unit, icon: str | None, device_class, state_class) -> None:
         self._influx = influx
         self._field = field
         self._mode = mode
         self._options = options
+        self._device_name = device_name
 
         self._attr_unique_id = f"powerwall_dashboard_{sensor_id}"
         self._attr_name = name
@@ -84,21 +88,19 @@ class PowerwallDashboardSensor(SensorEntity):
         self._attr_state_class = state_class
         self._attr_native_value: Any = None
 
+        # Device name set from user-provided Powerwall Name.
         self._attr_device_info = {
             "identifiers": {(DOMAIN, "powerwall_dashboard_energy")},
-            "name": "Powerwall Dashboard (InfluxDB)",
+            "name": device_name,
             "manufacturer": "Powerwall Dashboard",
             "model": "Influx Importer",
         }
 
     def _series_source(self) -> str:
-        return self._options.get(OPT_SERIES_SOURCE, DEFAULT_SERIES_SOURCE)
+        return self._options.get(OPT_SERIES_SOURCE, "autogen.http")
 
     def _day_mode(self) -> str:
-        return self._options.get(OPT_DAY_MODE, DEFAULT_DAY_MODE)
-
-    def _cq_tz(self) -> str:
-        return self._options.get(OPT_CQ_TZ, DEFAULT_CQ_TZ)
+        return self._options.get(OPT_DAY_MODE, "local_midnight")
 
     def update(self) -> None:
         day_mode = self._day_mode()

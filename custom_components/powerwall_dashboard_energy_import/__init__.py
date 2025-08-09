@@ -6,7 +6,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD
+from .const import (
+    DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
+    CONF_PW_NAME, DEFAULT_PW_NAME
+)
 from .influx_client import InfluxClient
 from .config_flow import OptionsFlowHandler
 
@@ -30,7 +33,16 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to connect to InfluxDB during setup")
         return False
 
-    hass.data[DOMAIN][entry.entry_id] = {"client": client, "config": entry.data}
+    # Prefer name from options; fall back to data; then default
+    pw_name = entry.options.get(CONF_PW_NAME) if entry.options else None
+    if not pw_name:
+        pw_name = entry.data.get(CONF_PW_NAME, DEFAULT_PW_NAME)
+
+    hass.data[DOMAIN][entry.entry_id] = {
+        "client": client,
+        "config": entry.data,
+        "pw_name": pw_name,
+    }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
