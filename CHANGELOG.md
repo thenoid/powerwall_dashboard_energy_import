@@ -1,21 +1,11 @@
 # Changelog
 
-## 0.4.2 — 2025-08-09
-- **Custom Powerwall Name** in setup & options; entity names/IDs are based on your name.
-- Example: entering "Garage Powerwall" yields entities like `sensor.garage_powerwall_solar_generated`.
-- You can change the name later via **Configure**; entities will retain stable unique_ids.
+## 0.4.3 — 2025-08-11
+- Add `async_migrate_entry` to migrate existing config entries to v2 and inject default Powerwall Name.
+- Fixes Home Assistant error: "Migration handler not found for entry ...".
 
-## 0.4.0
-- Built-in Daily and Monthly kWh sensors (no Utility Meter needed).
+## 0.4.2
+- Customizable Powerwall Name in setup/options; entities grouped under your chosen name.
 
-## 0.3.0
-- Options flow for day boundary and series source.
-
-## 0.2.1
-- Fix instantaneous power units and magnitude.
-
-## 0.2.0
-- HA constants hotfix, changelog, release workflow.
-
-## 0.1.0
-- Initial release.
+## 0.4.0–0.4.1
+- Built-in Daily/Monthly kWh sensors; options for day boundary & series source; kW fixes.

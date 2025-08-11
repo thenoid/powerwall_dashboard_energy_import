@@ -8,7 +8,7 @@ from homeassistant.core import HomeAssistant
 
 from .const import (
     DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
-    CONF_PW_NAME, DEFAULT_PW_NAME
+    CONF_PW_NAME, DEFAULT_PW_NAME,
 )
 from .influx_client import InfluxClient
 from .config_flow import OptionsFlowHandler
@@ -33,16 +33,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.error("Failed to connect to InfluxDB during setup")
         return False
 
-    # Prefer name from options; fall back to data; then default
-    pw_name = entry.options.get(CONF_PW_NAME) if entry.options else None
-    if not pw_name:
-        pw_name = entry.data.get(CONF_PW_NAME, DEFAULT_PW_NAME)
-
-    hass.data[DOMAIN][entry.entry_id] = {
-        "client": client,
-        "config": entry.data,
-        "pw_name": pw_name,
-    }
+    pw_name = entry.data.get(CONF_PW_NAME, DEFAULT_PW_NAME)
+    hass.data[DOMAIN][entry.entry_id] = {"client": client, "config": entry.data, "pw_name": pw_name}
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -58,3 +50,17 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
     return OptionsFlowHandler(entry)
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Handle migration of config entry data when version changes."""
+    version = entry.version or 1
+
+    if version < 2:
+        data = {**entry.data}
+        if CONF_PW_NAME not in data:
+            data[CONF_PW_NAME] = DEFAULT_PW_NAME
+        hass.config_entries.async_update_entry(entry, data=data, version=2)
+        _LOGGER.info("Migrated config entry %s from v%d to v2", entry.entry_id, version)
+        return True
+
+    return True
