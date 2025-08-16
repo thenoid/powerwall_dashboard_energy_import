@@ -1,11 +1,10 @@
 # Changelog
 
-## 0.4.3 — 2025-08-11
-- Add `async_migrate_entry` to migrate existing config entries to v2 and inject default Powerwall Name.
-- Fixes Home Assistant error: "Migration handler not found for entry ...".
+## 0.4.4 — 2025-08-16
+- All kWh sensors now use **state_class: total_increasing** to match Teslemetry and Energy Dashboard expectations.
+  - Affects lifetime, (Daily), and (Monthly) sensors.
+  - Prevents negative bars at midnight/month rollover.
+  - After updating, open **Developer Tools → Statistics** and click **Fix** if any sensors are flagged.
 
-## 0.4.2
-- Customizable Powerwall Name in setup/options; entities grouped under your chosen name.
-
-## 0.4.0–0.4.1
-- Built-in Daily/Monthly kWh sensors; options for day boundary & series source; kW fixes.
+## 0.4.3
+- Config entry migration + custom Powerwall Name support.
