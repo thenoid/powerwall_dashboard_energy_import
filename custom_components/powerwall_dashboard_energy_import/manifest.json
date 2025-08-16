@@ -3,8 +3,12 @@
   "name": "Powerwall Dashboard Energy Import",
   "version": "0.4.5",
   "documentation": "https://github.com/thenoid/powerwall_dashboard_energy_import",
+  "issue_tracker": "https://github.com/thenoid/powerwall_dashboard_energy_import/issues",
   "codeowners": [
     "@thenoid"
   ],
-  "iot_class": "local_polling"
+  "requirements": [],
+  "dependencies": [],
+  "iot_class": "local_polling",
+  "config_flow": true
 }

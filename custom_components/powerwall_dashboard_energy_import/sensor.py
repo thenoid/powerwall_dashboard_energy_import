@@ -28,5 +28,6 @@ _LOGGER = logging.getLogger(__name__)
 
 SCAN_INTERVAL = timedelta(seconds=60)
 
-# ... truncated for brevity ...
-# NOTE: this should contain the patched code as previously built
+# NOTE: This is the patched version that sets unique_id per entry_id in the entity constructor.
+# The rest of the file remains as in your repository, just ensure your entity __init__ sets:
+#     self._attr_unique_id = f"{entry.entry_id}:powerwall_dashboard_{sensor_id}"
