@@ -1,7 +1,7 @@
-## 0.5.1 — 2025-08-17
-### Added
-- Backfill service `powerwall_dashboard_energy_import.backfill` (Influx→HA long_term via `async_add_external_statistics`).
-- Supports start/end/all/metrics/dry_run/chunk_hours. Idempotent and chunked.
+## 0.5.2 — 2025-08-17
+### Fixed
+- HACS validation: add proper `hacs.json` and keep HA-only keys in `manifest.json`.
+- Bump integration version to 0.5.2.
 
 # Changelog
 

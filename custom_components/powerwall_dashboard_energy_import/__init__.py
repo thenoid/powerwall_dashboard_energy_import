@@ -72,38 +72,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
 
     hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)
-    async def _handle_backfill(call):
-        # Build or reuse client
-        conf = entry.data
-        client = hass.data.get(DOMAIN, {}).get("client")
-        if client is None:
-            try:
-                from .influx import InfluxClient as _Influx
-            except Exception:
-                from .influx_client_backfill import InfluxBackfillClient as _Influx
-            client = _Influx(
-                host=conf.get("host"),
-                port=conf.get("port", 8086),
-                db=conf.get("database"),
-                username=conf.get("username"),
-                password=conf.get("password"),
-            )
-
-        data = BACKFILL_SCHEMA(call.data)
-        result = await run_backfill(
-            hass, client,
-            metrics=data.get("metrics"),
-            start=data.get("start"),
-            end=data.get("end"),
-            all_mode=data.get("all", False),
-            dry_run=data.get("dry_run", False),
-            chunk_hours=data.get("chunk_hours", 168),
-            statistic_id_prefix=STATISTIC_ID_PREFIX,
-        )
-        _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
-
-    hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)
-
 
     return True
 
