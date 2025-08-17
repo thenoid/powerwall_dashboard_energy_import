@@ -25,30 +25,29 @@ jobs:
       - name: Black
         run: black --check .
       - name: Mypy
-        run: |
-          # Relax mypy initially; remove '|| true' once types are complete
-          mypy custom_components/powerwall_dashboard_energy_import || true
+        run: mypy custom_components/powerwall_dashboard_energy_import || true
 
   hassfest:
     name: hassfest (metadata validation)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hassfest@master
-        with:
-          category: integration
+      - uses: home-assistant/actions/hassfest@main
 
-  hass-lint:
-    name: hass-lint (manifest/config checks)
+  hacs:
+    name: HACS validation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: home-assistant/actions/hass-lint@master
+      - name: HACS validation
+        uses: hacs/action@main
+        with:
+          category: integration
 
   tests:
     name: Unit tests (pytest, HA 2025.8.2)
     runs-on: ubuntu-latest
-    needs: [lint, hassfest, hass-lint]
+    needs: [lint, hassfest, hacs]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -68,5 +67,4 @@ jobs:
           if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
           pip install "homeassistant==2025.8.2" pytest pytest-asyncio pytest-cov
       - name: Run tests
-        run: |
-          pytest -q --maxfail=1 --disable-warnings
+        run: pytest -q --maxfail=1 --disable-warnings

@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Dict, List, Optional
 
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
@@ -22,14 +21,14 @@ async def run_backfill(
     hass: HomeAssistant,
     client,
     *,
-    metrics: Optional[List[str]],
-    start: Optional[datetime],
-    end: Optional[datetime],
+    metrics: list[str] | None,
+    start: datetime | None,
+    end: datetime | None,
     all_mode: bool,
     dry_run: bool,
     chunk_hours: int,
     statistic_id_prefix: str,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     selected = _select_metrics(metrics)
     if not selected:
         _LOGGER.warning("[%s] No metrics selected; nothing to do.", DOMAIN)
@@ -60,7 +59,7 @@ async def run_backfill(
         [m.name for m in selected], dry_run
     )
 
-    total_written: Dict[str, int] = {}
+    total_written: dict[str, int] = {}
 
     for m in selected:
         stat_id = f"{statistic_id_prefix}.{m.statistic_key}"
@@ -85,7 +84,7 @@ async def run_backfill(
             chunk_end = min(end, chunk_start + timedelta(hours=chunk_hours))
             rows = await client.hourly_kwh(m, chunk_start, chunk_end)
 
-            stats: List[StatisticData] = []
+            stats: list[StatisticData] = []
             cumulative = base_offset
             for ts, kwh in rows:
                 cumulative += float(kwh)
@@ -107,10 +106,10 @@ async def run_backfill(
 
     return total_written
 
-def _select_metrics(names: Optional[List[str]]) -> List[MetricSpec]:
+def _select_metrics(names: list[str] | None) -> list[MetricSpec]:
     if not names:
         return list(SUPPORTED_METRICS.values())
-    out = []
+    out: list[MetricSpec] = []
     for n in names:
         spec = SUPPORTED_METRICS.get(n)
         if spec:
@@ -119,8 +118,8 @@ def _select_metrics(names: Optional[List[str]]) -> List[MetricSpec]:
             _LOGGER.warning("[%s] Unknown metric '%s' skipped.", DOMAIN, n)
     return out
 
-async def _earliest_timestamps(hass: HomeAssistant, client, metrics: Iterable[MetricSpec]) -> Dict[str, Optional[datetime]]:
-    results: Dict[str, Optional[datetime]] = {}
+async def _earliest_timestamps(hass: HomeAssistant, client, metrics: Iterable[MetricSpec]) -> dict[str, datetime | None]:
+    results: dict[str, datetime | None] = {}
     for m in metrics:
         results[m.name] = await client.first_timestamp(m)
     return results
@@ -134,6 +133,6 @@ def _range_by_hours(start: datetime, end: datetime, step: int):
         yield cur
         cur += timedelta(hours=step)
 
-def _log_preview(metric_name: str, stats: List[StatisticData]):
+def _log_preview(metric_name: str, stats: list[StatisticData]):
     preview = stats[:5] + (["..."] if len(stats) > 10 else []) + stats[-5:]
     _LOGGER.info("[%s] Preview %s (%d rows): %s", DOMAIN, metric_name, len(stats), preview)

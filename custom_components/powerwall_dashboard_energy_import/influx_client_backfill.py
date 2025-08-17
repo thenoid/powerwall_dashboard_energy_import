@@ -1,6 +1,5 @@
 from __future__ import annotations
 from datetime import datetime, timezone
-from typing import List, Tuple, Optional
 import logging
 import httpx
 
@@ -23,7 +22,7 @@ class InfluxBackfillClient:
             r.raise_for_status()
             return r.json()
 
-    async def first_timestamp(self, metric) -> Optional[datetime]:
+    async def first_timestamp(self, metric) -> datetime | None:
         q = f"SELECT FIRST({metric.field}) FROM http WHERE {metric.field} > 0"
         data = await self._q(q)
         try:
@@ -33,7 +32,7 @@ class InfluxBackfillClient:
             _LOGGER.debug("[%s] earliest timestamp not found for %s", DOMAIN, metric.name)
             return None
 
-    async def hourly_kwh(self, metric, start: datetime, end: datetime) -> List[Tuple[datetime, float]]:
+    async def hourly_kwh(self, metric, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
         q = (
             "SELECT integral({field},1h)/1000 "
             "FROM http "
@@ -45,7 +44,7 @@ class InfluxBackfillClient:
             end=end.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z"),
         )
         data = await self._q(q)
-        out: List[Tuple[datetime, float]] = []
+        out: list[tuple[datetime, float]] = []
         try:
             values = data["results"][0]["series"][0]["values"]
         except Exception:

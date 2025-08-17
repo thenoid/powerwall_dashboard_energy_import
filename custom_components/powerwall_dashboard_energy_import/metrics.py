@@ -8,7 +8,7 @@ class MetricSpec:
     statistic_key: str
     friendly_name: str
 
-SUPPORTED_METRICS = {
+SUPPORTED_METRICS: dict[str, MetricSpec] = {
     # Grid
     "grid_import":        MetricSpec("grid_import", "from_grid", "grid_import", "Grid Imported"),
     "grid_export":        MetricSpec("grid_export", "to_grid",   "grid_export", "Grid Exported"),

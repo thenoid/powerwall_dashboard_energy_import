@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-
 DOMAIN = "powerwall_dashboard_energy_import"
 STATISTIC_ID_PREFIX = "powerwall_dashboard"  # stable prefix for all long_term stats
-
 
 CONF_HOST = "host"
 CONF_PORT = "port"

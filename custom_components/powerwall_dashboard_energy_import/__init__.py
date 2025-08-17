@@ -10,10 +10,10 @@ import logging
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.core import HomeAssistant
 
-from .const import (, STATISTIC_ID_PREFIX
+from .const import (
     DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
     CONF_PW_NAME, DEFAULT_PW_NAME,
-)
+, STATISTIC_ID_PREFIX)
 from .influx_client import InfluxClient
 from .config_flow import OptionsFlowHandler
 
@@ -41,6 +41,70 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data[DOMAIN][entry.entry_id] = {"client": client, "config": entry.data, "pw_name": pw_name}
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    async def _handle_backfill(call):
+        # Build or reuse client
+        conf = entry.data
+        client = hass.data.get(DOMAIN, {}).get("client")
+        if client is None:
+            try:
+                from .influx import InfluxClient as _Influx
+            except Exception:
+                from .influx_client_backfill import InfluxBackfillClient as _Influx
+            client = _Influx(
+                host=conf.get("host"),
+                port=conf.get("port", 8086),
+                db=conf.get("database"),
+                username=conf.get("username"),
+                password=conf.get("password"),
+            )
+
+        data = BACKFILL_SCHEMA(call.data)
+        result = await run_backfill(
+            hass, client,
+            metrics=data.get("metrics"),
+            start=data.get("start"),
+            end=data.get("end"),
+            all_mode=data.get("all", False),
+            dry_run=data.get("dry_run", False),
+            chunk_hours=data.get("chunk_hours", 168),
+            statistic_id_prefix=STATISTIC_ID_PREFIX,
+        )
+        _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
+
+    hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)
+    async def _handle_backfill(call):
+        # Build or reuse client
+        conf = entry.data
+        client = hass.data.get(DOMAIN, {}).get("client")
+        if client is None:
+            try:
+                from .influx import InfluxClient as _Influx
+            except Exception:
+                from .influx_client_backfill import InfluxBackfillClient as _Influx
+            client = _Influx(
+                host=conf.get("host"),
+                port=conf.get("port", 8086),
+                db=conf.get("database"),
+                username=conf.get("username"),
+                password=conf.get("password"),
+            )
+
+        data = BACKFILL_SCHEMA(call.data)
+        result = await run_backfill(
+            hass, client,
+            metrics=data.get("metrics"),
+            start=data.get("start"),
+            end=data.get("end"),
+            all_mode=data.get("all", False),
+            dry_run=data.get("dry_run", False),
+            chunk_hours=data.get("chunk_hours", 168),
+            statistic_id_prefix=STATISTIC_ID_PREFIX,
+        )
+        _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
+
+    hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)
+
+
     return True
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -69,7 +133,6 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
     return True
 
-
 BACKFILL_SCHEMA = vol.Schema({
     vol.Optional("start"): cv.datetime,
     vol.Optional("end"): cv.datetime,
@@ -78,37 +141,3 @@ BACKFILL_SCHEMA = vol.Schema({
     vol.Optional("dry_run", default=False): bool,
     vol.Optional("chunk_hours", default=168): vol.All(int, vol.Range(min=1, max=24*30)),
 })
-
-
-
-    async def _handle_backfill(call):
-        # Get client from hass.data if available; otherwise construct one from entry.data
-        conf = entry.data
-        client = hass.data.get(DOMAIN, {}).get("client")
-        if client is None:
-            try:
-                from .influx import InfluxClient as _Influx
-            except Exception:  # fallback to minimal client
-                from .influx_client_backfill import InfluxBackfillClient as _Influx
-            client = _Influx(
-                host=conf.get("host"),
-                port=conf.get("port", 8086),
-                db=conf.get("database"),
-                username=conf.get("username"),
-                password=conf.get("password"),
-            )
-
-        data = BACKFILL_SCHEMA(call.data)
-        result = await run_backfill(
-            hass, client,
-            metrics=data.get("metrics"),
-            start=data.get("start"),
-            end=data.get("end"),
-            all_mode=data.get("all", False),
-            dry_run=data.get("dry_run", False),
-            chunk_hours=data.get("chunk_hours", 168),
-            statistic_id_prefix=STATISTIC_ID_PREFIX,
-        )
-        _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
-
-    hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)
