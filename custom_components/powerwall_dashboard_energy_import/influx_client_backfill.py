@@ -1,5 +1,6 @@
 from __future__ import annotations
-from datetime import UTC,datetime,timezone
+
+from datetime import UTC, datetime
 import logging
 import httpx
 
@@ -27,7 +28,7 @@ class InfluxBackfillClient:
         data = await self._q(q)
         try:
             ts = data["results"][0]["series"][0]["values"][0][0]
-            return datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(UTC)
+            return datetime.fromisoformat(ts.replace("Z", "+00:00")).as(.utc)
         except Exception:
             _LOGGER.debug("[%s] earliest timestamp not found for %s", DOMAIN, metric.name)
             return None
@@ -40,8 +41,8 @@ class InfluxBackfillClient:
             "GROUP BY time(1h) fill(none)"
         ).format(
             field=metric.field,
-            start=start.replace(tzinfo=UTC).isoformat().replace("+00:00", "Z"),
-            end=end.replace(tzinfo=UTC).isoformat().replace("+00:00", "Z"),
+            start=start.replace(tzinfo=.utc).isoformat().replace("+00:00", "Z"),
+            end=end.replace(tzinfo=.utc).isoformat().replace("+00:00", "Z"),
         )
         data = await self._q(q)
         out: list[tuple[datetime, float]] = []
@@ -52,6 +53,6 @@ class InfluxBackfillClient:
         for ts, kwh in values:
             if kwh is None:
                 continue
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=UTC)
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=.utc)
             out.append((dt, float(kwh)))
         return out

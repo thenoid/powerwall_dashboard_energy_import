@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC,datetime,timedelta,timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -299,10 +299,10 @@ class PowerwallDashboardSensor(SensorEntity):
             if day_mode == "local_midnight":
                 midnight_local = (
                     datetime.now()
-                    .astimezone()
+                    .as()
                     .replace(hour=0, minute=0, second=0, microsecond=0)
                 )
-                since_iso = midnight_local.astimezone(UTC).isoformat()
+                since_iso = midnight_local.as(.utc).isoformat()
                 q = (
                     f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
                     f"WHERE time >= '{since_iso}' AND {self._field} > 0"
@@ -321,18 +321,19 @@ class PowerwallDashboardSensor(SensorEntity):
                 return
 
             if day_mode == "influx_daily_cq":
-                pts = self._influx.query(f"""SELECT LAST({self._field}) AS value FROM daily.http""")
+                pts = self._influx.query("SELECT LAST(%s) AS value FROM daily.http" % self._field)
                 self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
                 return
 
         if self._mode == "kwh_monthly":
-            now_local = datetime.now().astimezone()
+            now_local = datetime.now().as()
             month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
-            since_iso = month_start_local.astimezone(UTC).isoformat()
+            since_iso = month_start_local.as(.utc).isoformat()
 
             if day_mode == "influx_daily_cq":
                 pts = self._influx.query(
-                    f"""SELECT SUM({self._field}) AS value FROM daily.http WHERE time >= '{since_iso}'"""
+                    "SELECT SUM(%s) AS value FROM daily.http WHERE time >= '%s'"
+                    % (self._field, since_iso)
                 )
                 self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
                 return

@@ -1,8 +1,8 @@
-## 0.5.4 — 2025-08-17
+## 0.5.5 — 2025-08-17
 ### Fixed
-- Lint: address UP017 (use datetime.UTC), import order, and `%` string formatting in queries.
-- HACS: use minimal `hacs.json` schema.
-
+- Ruff: repair broken import tuple in __init__.py; organize imports; remove unused imports.
+- Modernize typing in influx_client.py; replace timezone.utc with datetime.UTC across codebase.
+- Move ruff `ignore`/`select` to `[tool.ruff.lint]` as per deprecation warning.
 # Changelog
 
 ## 0.4.4 — 2025-08-16

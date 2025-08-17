@@ -13,7 +13,7 @@ from homeassistant.core import HomeAssistant
 from .const import (
     DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
     CONF_PW_NAME, DEFAULT_PW_NAME,
-, STATISTIC_ID_PREFIX)
+
 from .influx_client import InfluxClient
 from .config_flow import OptionsFlowHandler
 

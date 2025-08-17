@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import List, Dict, Any
+from typing import Any
 from influxdb import InfluxDBClient
 from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
 
@@ -40,7 +40,7 @@ class InfluxClient:
             _LOGGER.error("InfluxDB connection failed: %s", err)
             return False
 
-    def query(self, query: str) -> List[Dict[str, Any]]:
+    def query(self, query: str) -> list[dict[str, Any]]:
         """Run an InfluxQL query and return the raw result points."""
         if not self._client:
             raise RuntimeError("InfluxDB client not connected")
