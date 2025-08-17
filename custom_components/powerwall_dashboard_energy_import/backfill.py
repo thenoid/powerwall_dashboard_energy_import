@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
-from datetime import datetime, timedelta, timezone
+from datetime import UTC,datetime,timedelta,timezone
 import logging
 
 from homeassistant.core import HomeAssistant
@@ -88,7 +88,7 @@ async def run_backfill(
             cumulative = base_offset
             for ts, kwh in rows:
                 cumulative += float(kwh)
-                stats.append(StatisticData(start=ts.replace(tzinfo=timezone.utc), sum=cumulative))
+                stats.append(StatisticData(start=ts.replace(tzinfo=UTC), sum=cumulative))
 
             if not stats:
                 continue

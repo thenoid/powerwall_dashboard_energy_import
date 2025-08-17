@@ -1,9 +1,5 @@
 {
   "name": "Powerwall Dashboard Energy Import",
   "content_in_root": false,
-  "render_readme": true,
-  "domains": [
-    "powerwall_dashboard_energy_import"
-  ],
-  "country": "US"
+  "render_readme": true
 }

@@ -1,7 +1,7 @@
-## 0.5.2 — 2025-08-17
+## 0.5.4 — 2025-08-17
 ### Fixed
-- HACS validation: add proper `hacs.json` and keep HA-only keys in `manifest.json`.
-- Bump integration version to 0.5.2.
+- Lint: address UP017 (use datetime.UTC), import order, and `%` string formatting in queries.
+- HACS: use minimal `hacs.json` schema.
 
 # Changelog
 
