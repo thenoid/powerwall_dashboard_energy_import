@@ -1,3 +1,7 @@
+from .metrics import SUPPORTED_METRICS
+from .backfill import run_backfill
+from homeassistant.helpers import config_validation as cv
+import voluptuous as vol
 
 """Powerwall Dashboard Energy Import integration."""
 from __future__ import annotations
@@ -6,7 +10,7 @@ import logging
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.core import HomeAssistant
 
-from .const import (
+from .const import (, STATISTIC_ID_PREFIX
     DOMAIN, CONF_HOST, CONF_PORT, CONF_DB_NAME, CONF_USERNAME, CONF_PASSWORD,
     CONF_PW_NAME, DEFAULT_PW_NAME,
 )
@@ -64,3 +68,47 @@ async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         return True
 
     return True
+
+
+BACKFILL_SCHEMA = vol.Schema({
+    vol.Optional("start"): cv.datetime,
+    vol.Optional("end"): cv.datetime,
+    vol.Optional("all", default=False): bool,
+    vol.Optional("metrics"): [vol.In(list(SUPPORTED_METRICS.keys()))],
+    vol.Optional("dry_run", default=False): bool,
+    vol.Optional("chunk_hours", default=168): vol.All(int, vol.Range(min=1, max=24*30)),
+})
+
+
+
+    async def _handle_backfill(call):
+        # Get client from hass.data if available; otherwise construct one from entry.data
+        conf = entry.data
+        client = hass.data.get(DOMAIN, {}).get("client")
+        if client is None:
+            try:
+                from .influx import InfluxClient as _Influx
+            except Exception:  # fallback to minimal client
+                from .influx_client_backfill import InfluxBackfillClient as _Influx
+            client = _Influx(
+                host=conf.get("host"),
+                port=conf.get("port", 8086),
+                db=conf.get("database"),
+                username=conf.get("username"),
+                password=conf.get("password"),
+            )
+
+        data = BACKFILL_SCHEMA(call.data)
+        result = await run_backfill(
+            hass, client,
+            metrics=data.get("metrics"),
+            start=data.get("start"),
+            end=data.get("end"),
+            all_mode=data.get("all", False),
+            dry_run=data.get("dry_run", False),
+            chunk_hours=data.get("chunk_hours", 168),
+            statistic_id_prefix=STATISTIC_ID_PREFIX,
+        )
+        _LOGGER.info("[%s] Backfill result: %s", DOMAIN, result)
+
+    hass.services.async_register(DOMAIN, "backfill", _handle_backfill, schema=BACKFILL_SCHEMA)

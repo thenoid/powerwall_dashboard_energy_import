@@ -1,0 +1,31 @@
+backfill:
+  name: Backfill InfluxDB energy statistics
+  description: Import hourly kWh from InfluxDB into Home Assistant long_term statistics.
+  fields:
+    start:
+      description: ISO8601 start datetime (local or UTC). If omitted and "all" is false, required.
+      example: "2025-06-01T00:00:00-06:00"
+    end:
+      description: ISO8601 end datetime (exclusive). Defaults to now().
+      example: "2025-08-16T00:00:00-06:00"
+    all:
+      description: If true, auto-detect earliest timestamp across selected metrics and use that as start.
+      example: true
+      default: false
+    metrics:
+      description: Which metrics to import. Defaults to all supported.
+      example:
+        - grid_import
+        - grid_export
+        - solar_generated
+        - home_usage
+        - battery_charged
+        - battery_discharged
+    dry_run:
+      description: If true, perform validation and logging only; do not write.
+      example: false
+      default: false
+    chunk_hours:
+      description: Batch size (hours) per write to reduce recorder and DB pressure.
+      example: 168
+      default: 168

@@ -1,0 +1,7 @@
+ruff
+black
+mypy
+pytest
+pytest-asyncio
+pytest-cov
+# Pin Home Assistant in CI job instead of here to avoid user env conflicts

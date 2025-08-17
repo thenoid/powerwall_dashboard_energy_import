@@ -1,0 +1,72 @@
+name: CI
+
+on:
+  push:
+    branches: ["main", "feat/**"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint (ruff/black/mypy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install linters
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black mypy
+      - name: Ruff
+        run: ruff check .
+      - name: Black
+        run: black --check .
+      - name: Mypy
+        run: |
+          # Relax mypy initially; remove '|| true' once types are complete
+          mypy custom_components/powerwall_dashboard_energy_import || true
+
+  hassfest:
+    name: hassfest (metadata validation)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hassfest@master
+        with:
+          category: integration
+
+  hass-lint:
+    name: hass-lint (manifest/config checks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: home-assistant/actions/hass-lint@master
+
+  tests:
+    name: Unit tests (pytest, HA 2025.8.2)
+    runs-on: ubuntu-latest
+    needs: [lint, hassfest, hass-lint]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements*.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f requirements-dev.txt ]; then pip install -r requirements-dev.txt; fi
+          pip install "homeassistant==2025.8.2" pytest pytest-asyncio pytest-cov
+      - name: Run tests
+        run: |
+          pytest -q --maxfail=1 --disable-warnings
