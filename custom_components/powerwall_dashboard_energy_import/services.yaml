@@ -1,0 +1,31 @@
+
+backfill:
+  name: Backfill energy data
+  description: >
+    Imports historical energy data from InfluxDB into Home Assistant.
+    You must provide either a start date or the 'all' flag.
+  fields:
+    all:
+      name: All
+      description: "If true, backfills all data from the earliest record in InfluxDB."
+      example: true
+      selector:
+        boolean:
+    start:
+      name: Start date
+      description: "The first day to include in the backfill (e.g., '2023-01-01')."
+      example: "2023-01-01"
+      selector:
+        text:
+    end:
+      name: End date
+      description: "The last day to include in the backfill (e.g., '2023-12-31'). Defaults to today."
+      example: "2023-12-31"
+      selector:
+        text:
+    sensor_prefix:
+      name: Sensor prefix
+      description: "The device name (pw_name) of the Powerwall integration to backfill."
+      example: "My Powerwall"
+      selector:
+        text:

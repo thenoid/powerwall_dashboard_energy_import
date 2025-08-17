@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import logging
 from collections import deque
+from datetime import date, timedelta
 from typing import List, Dict, Any
 from influxdb import InfluxDBClient
 from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
@@ -52,6 +53,30 @@ class InfluxClient:
         except Exception as err:
             _LOGGER.error("InfluxDB query failed: %s", err)
             return []
+
+    def get_first_timestamp(self, series: str) -> str | None:
+        """Get the timestamp of the very first record for a series."""
+        # We need a field to query, 'home' is a reasonable default for this purpose
+        query = f"SELECT FIRST(home) FROM {series}"
+        try:
+            result = self.query(query)
+            if result and "time" in result[0]:
+                return result[0]["time"]
+        except Exception as err:
+            _LOGGER.warning("Could not determine first timestamp for series %s: %s", series, err)
+        return None
+
+    def get_daily_kwh(self, field: str, day: date, series: str) -> float:
+        """Fetch the total kWh for a given field on a specific day."""
+        day_start = day.isoformat() + "T00:00:00Z"
+        day_end = (day + timedelta(days=1)).isoformat() + "T00:00:00Z"
+
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time >= '{day_start}' AND time < '{day_end}' AND {field} > 0"
+        )
+        result = self.query(query)
+        return round(result[0].get("value", 0.0), 3) if result else 0.0
 
     def get_history(self) -> list[str]:
         """Return a list of recent queries (most recent last)."""
