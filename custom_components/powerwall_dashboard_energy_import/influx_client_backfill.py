@@ -1,51 +1,39 @@
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
 import logging
-import httpx
+from typing import Optional, Tuple, List
 
-from .const import DOMAIN
+import httpx
 
 _LOGGER = logging.getLogger(__name__)
 
 class InfluxBackfillClient:
-    """Minimal async InfluxDB 1.8 client used by backfill if the main client isn't available."""
-    def __init__(self, host: str, port: int, db: str, username: str | None=None, password: str | None=None, timeout: float = 10.0):
+    """Minimal async InfluxDB 1.8 client used by backfill."""
+    def __init__(self, host: str, port: int, db: str, username: Optional[str]=None, password: Optional[str]=None, timeout: float = 10.0):
         self._base = f"http://{host}:{port}/query"
         self._db = db
         self._auth = (username, password) if username and password else None
         self._timeout = timeout
 
-    async def _q(self, q: str):
+    async def _q(self, q: str) -> dict:
         params = {"db": self._db, "q": q}
-        async with httpx.AsyncClient(timeout=self._timeout) as s:
-            r = await s.get(self._base, params=params, auth=self._auth)
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            r = await client.get(self._base, params=params, auth=self._auth)
             r.raise_for_status()
             return r.json()
 
-    async def first_timestamp(self, metric) -> datetime | None:
-        q = f"SELECT FIRST({metric.field}) FROM http WHERE {metric.field} > 0"
-        data = await self._q(q)
-        try:
-            ts = data["results"][0]["series"][0]["values"][0][0]
-            return datetime.fromisoformat(ts.replace("Z", "+00:00")).as(.utc)
-        except Exception:
-            _LOGGER.debug("[%s] earliest timestamp not found for %s", DOMAIN, metric.name)
-            return None
-
-    async def hourly_kwh(self, metric, start: datetime, end: datetime) -> list[tuple[datetime, float]]:
+    async def hourly_kwh(self, field: str, start: datetime, end: datetime) -> List[Tuple[datetime, float]]:
+        """Return list of (datetime, kWh) for the range, 1h buckets."""
         q = (
-            "SELECT integral({field},1h)/1000 "
-            "FROM http "
-            "WHERE time >= '{start}' AND time < '{end}' "
-            "GROUP BY time(1h) fill(none)"
-        ).format(
-            field=metric.field,
-            start=start.replace(tzinfo=.utc).isoformat().replace("+00:00", "Z"),
-            end=end.replace(tzinfo=.utc).isoformat().replace("+00:00", "Z"),
+            f"SELECT SUM({field}) AS kwh FROM http "
+            f"WHERE time >= '{start.astimezone(UTC).isoformat().replace('+00:00','Z')}' "
+            f"AND time < '{end.astimezone(UTC).isoformat().replace('+00:00','Z')}' "
+            f"GROUP BY time(1h) fill(null)"
         )
         data = await self._q(q)
-        out: list[tuple[datetime, float]] = []
+        out: List[Tuple[datetime, float]] = []
         try:
             values = data["results"][0]["series"][0]["values"]
         except Exception:
@@ -53,6 +41,6 @@ class InfluxBackfillClient:
         for ts, kwh in values:
             if kwh is None:
                 continue
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).replace(tzinfo=.utc)
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone(UTC)
             out.append((dt, float(kwh)))
         return out

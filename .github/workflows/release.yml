@@ -1,3 +1,4 @@
+
 name: Release
 
 on:
@@ -6,7 +7,7 @@ on:
       - 'v*.*.*'
 
 permissions:
-  contents: write  # <-- required for creating releases
+  contents: write
 
 jobs:
   release:
@@ -18,11 +19,10 @@ jobs:
       - name: Build zip
         run: |
           mkdir -p dist
-          zip -r dist/powerwall_dashboard_energy_import.zip custom_components hacs.json LICENSE README.md CHANGELOG.md pyproject.toml requirements-test.txt || true
+          zip -r dist/powerwall_dashboard_energy_import.zip custom_components/powerwall_dashboard_energy_import README.md CHANGELOG.md pyproject.toml hacs.json || true
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           files: dist/powerwall_dashboard_energy_import.zip
           generate_release_notes: true
-
