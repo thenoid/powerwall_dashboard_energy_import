@@ -1,0 +1,5 @@
+{
+  "domain": "powerwall_dashboard_energy_import",
+  "name": "Powerwall Dashboard Energy Import",
+  "integrations": ["powerwall_dashboard_energy_import"]
+}

@@ -1,3 +1,21 @@
 .secret
 CLAUDE.md
 GEMINI.md
+logs/
+.python-version
+.direnv
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Testing and Coverage
+.coverage
+coverage.xml
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
