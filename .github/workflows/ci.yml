@@ -1,0 +1,189 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  lint:
+    name: "Lint & Format"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff
+      - name: Run ruff
+        run: |
+          ruff check .
+          ruff format --check .
+
+  test:
+    name: "Tests"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.12', '3.13']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-test.txt
+          pip install homeassistant
+          pip install voluptuous
+          pip install influxdb
+      - name: Run tests with coverage
+        run: |
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          pytest --cov=custom_components --cov-report=xml --cov-report=term-missing tests/
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        if: matrix.python-version == '3.12'
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  mypy:
+    name: "MyPy"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install mypy
+          pip install -r requirements-test.txt
+          pip install homeassistant
+          pip install voluptuous
+          pip install influxdb
+      - name: Run mypy
+        run: mypy .
+
+  security:
+    name: "Security Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install bandit
+        run: |
+          python -m pip install --upgrade pip
+          pip install bandit[toml]
+      - name: Run security scan
+        run: |
+          bandit -r custom_components/ -f json -o bandit-report.json || true
+          bandit -r custom_components/ -f txt || true
+      - name: Upload security scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bandit-security-report
+          path: bandit-report.json
+
+  ha-compatibility:
+    name: "HA Compatibility"
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        ha-version: ['2025.1.0', '2025.1.2', '2025.1.4']
+      fail-fast: false
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install HA ${{ matrix.ha-version }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install homeassistant==${{ matrix.ha-version }}
+          pip install voluptuous
+          pip install influxdb
+      - name: Test integration imports
+        run: |
+          export PYTHONPATH=$PWD:$PYTHONPATH
+          python -c "
+          import sys
+          try:
+              from custom_components.powerwall_dashboard_energy_import import async_setup_entry
+              from custom_components.powerwall_dashboard_energy_import.config_flow import ConfigFlow
+              from custom_components.powerwall_dashboard_energy_import.sensor import PowerwallDashboardSensor
+              print('✅ All imports successful for HA ${{ matrix.ha-version }}')
+          except Exception as e:
+              print(f'❌ Import failed for HA ${{ matrix.ha-version }}: {e}')
+              sys.exit(1)
+          "
+
+  dependency-scan:
+    name: "Dependency Vulnerability Scan"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety
+          pip install -r requirements-test.txt
+          pip install homeassistant
+          pip install voluptuous
+          pip install influxdb
+      - name: Run safety check
+        run: |
+          safety scan --output json --output-file safety-report.json || true
+          safety scan || true
+      - name: Upload vulnerability scan results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: safety-vulnerability-report
+          path: safety-report.json
+
+  validate:
+    name: "HACS Validate"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: HACS Validation
+        uses: hacs/action@main
+        continue-on-error: true
+        with:
+          category: "integration"
+          ignore: "brands"

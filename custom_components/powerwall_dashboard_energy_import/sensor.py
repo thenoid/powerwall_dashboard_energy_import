@@ -1,26 +1,27 @@
 """Sensor platform for Powerwall Dashboard Energy Import."""
+
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components.sensor import (
-    SensorEntity,
     SensorDeviceClass,
+    SensorEntity,
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import UnitOfPower, UnitOfEnergy, PERCENTAGE
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import (
+    DEFAULT_DAY_MODE,
+    DEFAULT_SERIES_SOURCE,
     DOMAIN,
     OPT_DAY_MODE,
     OPT_SERIES_SOURCE,
-    DEFAULT_DAY_MODE,
-    DEFAULT_SERIES_SOURCE,
 )
 from .influx_client import InfluxClient
 
@@ -173,15 +174,24 @@ async def async_setup_entry(
     store = hass.data[DOMAIN][entry.entry_id]
     client: InfluxClient = store["client"]
     pw_name: str = store.get("pw_name", "Powerwally McPowerwall Face")
-    options = entry.options or {}
+    options: dict[str, Any] = dict(entry.options or {})
 
     entities: list[PowerwallDashboardSensor] = []
-    for sensor_id, name, field, mode, unit, icon, device_class, state_class in SENSOR_DEFINITIONS:
+    for (
+        sensor_id,
+        name,
+        field,
+        mode,
+        unit,
+        icon,
+        device_class,
+        state_class,
+    ) in SENSOR_DEFINITIONS:
         entities.append(
             PowerwallDashboardSensor(
                 entry,
                 client,
-                options,
+                dict(options),
                 pw_name,
                 sensor_id,
                 name,
@@ -246,25 +256,31 @@ class PowerwallDashboardSensor(SensorEntity):
     def _day_mode(self) -> str:
         return self._options.get(OPT_DAY_MODE, DEFAULT_DAY_MODE)
 
-    def update(self) -> None:
+    def update(self) -> None:  # noqa: C901
         day_mode = self._day_mode()
         series = self._series_source()
 
         if self._mode == "last_kw":
-            pts = self._influx.query(f"SELECT LAST({self._field}) AS value FROM {series}")
+            pts = self._influx.query(
+                f"SELECT LAST({self._field}) AS value FROM {series}"
+            )
             val = pts[0].get("value", 0.0) if pts else 0.0
             self._attr_native_value = round((val or 0.0) / 1000.0, 3)
             return
 
         if self._mode == "last_kw_combo_battery":
-            pts = self._influx.query(f"SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM {series}")
+            pts = self._influx.query(
+                f"SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM {series}"
+            )
             chg = (pts[0].get("chg") if pts else 0) or 0
             dis = (pts[0].get("dis") if pts else 0) or 0
             self._attr_native_value = round(max(chg, dis) / 1000.0, 3)
             return
 
         if self._mode == "last_kw_combo_grid":
-            pts = self._influx.query(f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}")
+            pts = self._influx.query(
+                f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}"
+            )
             exp = (pts[0].get("exp") if pts else 0) or 0
             imp = (pts[0].get("imp") if pts else 0) or 0
             self._attr_native_value = round(max(exp, imp) / 1000.0, 3)
@@ -276,23 +292,35 @@ class PowerwallDashboardSensor(SensorEntity):
             return
 
         if self._mode == "state_battery":
-            pts = self._influx.query(f"SELECT LAST(to_pw) AS charge, LAST(from_pw) AS discharge FROM {series}")
+            pts = self._influx.query(
+                f"SELECT LAST(to_pw) AS charge, LAST(from_pw) AS discharge FROM {series}"
+            )
             chg = (pts[0].get("charge") if pts else 0) or 0
             dis = (pts[0].get("discharge") if pts else 0) or 0
-            self._attr_native_value = "Charging" if chg > 0 else ("Discharging" if dis > 0 else "Idle")
+            self._attr_native_value = (
+                "Charging" if chg > 0 else ("Discharging" if dis > 0 else "Idle")
+            )
             return
 
         if self._mode == "state_grid":
-            pts = self._influx.query(f"SELECT LAST(to_grid) AS export, LAST(from_grid) AS import FROM {series}")
+            pts = self._influx.query(
+                f"SELECT LAST(to_grid) AS export, LAST(from_grid) AS import FROM {series}"
+            )
             exp = (pts[0].get("export") if pts else 0) or 0
             imp = (pts[0].get("import") if pts else 0) or 0
-            self._attr_native_value = "Producing" if exp > 0 else ("Consuming" if imp > 0 else "Idle")
+            self._attr_native_value = (
+                "Producing" if exp > 0 else ("Consuming" if imp > 0 else "Idle")
+            )
             return
 
         if self._mode == "state_island":
-            pts = self._influx.query("SELECT LAST(ISLAND_GridConnected_bool) AS val FROM grid.http")
-            val = (pts[0].get("val") if pts else None)
-            self._attr_native_value = "Unknown" if val is None else ("On-grid" if bool(val) else "Off-grid")
+            pts = self._influx.query(
+                "SELECT LAST(ISLAND_GridConnected_bool) AS val FROM grid.http"
+            )
+            val = pts[0].get("val") if pts else None
+            self._attr_native_value = (
+                "Unknown" if val is None else ("On-grid" if bool(val) else "Off-grid")
+            )
             return
 
         if self._mode in ("kwh_total", "kwh_daily"):
@@ -308,7 +336,9 @@ class PowerwallDashboardSensor(SensorEntity):
                     f"WHERE time >= '{since_iso}' AND {self._field} > 0"
                 )
                 pts = self._influx.query(q)
-                self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                self._attr_native_value = (
+                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                )
                 return
 
             if day_mode == "rolling_24h":
@@ -317,25 +347,34 @@ class PowerwallDashboardSensor(SensorEntity):
                     f"WHERE time >= now() - 24h AND {self._field} > 0"
                 )
                 pts = self._influx.query(q)
-                self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                self._attr_native_value = (
+                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                )
                 return
 
             if day_mode == "influx_daily_cq":
-                pts = self._influx.query("SELECT LAST(%s) AS value FROM daily.http" % self._field)
-                self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                pts = self._influx.query(
+                    f"SELECT LAST({self._field}) AS value FROM daily.http"
+                )
+                self._attr_native_value = (
+                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                )
                 return
 
         if self._mode == "kwh_monthly":
             now_local = datetime.now().astimezone()
-            month_start_local = now_local.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            month_start_local = now_local.replace(
+                day=1, hour=0, minute=0, second=0, microsecond=0
+            )
             since_iso = month_start_local.astimezone(timezone.utc).isoformat()
 
             if day_mode == "influx_daily_cq":
                 pts = self._influx.query(
-                    "SELECT SUM(%s) AS value FROM daily.http WHERE time >= '%s'"
-                    % (self._field, since_iso)
+                    f"SELECT SUM({self._field}) AS value FROM daily.http WHERE time >= '{since_iso}'"
                 )
-                self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                self._attr_native_value = (
+                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
+                )
                 return
 
             q = (

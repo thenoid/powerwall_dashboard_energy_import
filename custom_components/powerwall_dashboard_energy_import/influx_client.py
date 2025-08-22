@@ -1,19 +1,29 @@
 """InfluxDB client helper for Powerwall Dashboard Energy Import."""
+
 from __future__ import annotations
 
 import logging
 from collections import deque
 from datetime import date, timedelta
-from typing import List, Dict, Any
+from typing import Any
+
 from influxdb import InfluxDBClient
 from influxdb.exceptions import InfluxDBClientError, InfluxDBServerError
 
 _LOGGER = logging.getLogger(__name__)
 
+
 class InfluxClient:
     """Wrapper for InfluxDB 1.8.10 queries with history tracking."""
 
-    def __init__(self, host: str, port: int, username: str | None, password: str | None, database: str):
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str | None,
+        password: str | None,
+        database: str,
+    ):
         self.host = host
         self.port = port
         self.username = username or ""
@@ -41,7 +51,7 @@ class InfluxClient:
             _LOGGER.error("InfluxDB connection failed: %s", err)
             return False
 
-    def query(self, query: str) -> List[Dict[str, Any]]:
+    def query(self, query: str) -> list[dict[str, Any]]:
         """Run an InfluxQL query and return the raw result points."""
         if not self._client:
             raise RuntimeError("InfluxDB client not connected")
@@ -63,7 +73,9 @@ class InfluxClient:
             if result and "time" in result[0]:
                 return result[0]["time"]
         except Exception as err:
-            _LOGGER.warning("Could not determine first timestamp for series %s: %s", series, err)
+            _LOGGER.warning(
+                "Could not determine first timestamp for series %s: %s", series, err
+            )
         return None
 
     def get_daily_kwh(self, field: str, day: date, series: str) -> float:
