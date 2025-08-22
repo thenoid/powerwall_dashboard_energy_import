@@ -67,14 +67,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     if not hass.services.has_service(DOMAIN, "backfill"):
-        hass.services.async_register(DOMAIN, "backfill", async_handle_backfill)  # type: ignore[arg-type]
+        hass.services.async_register(DOMAIN, "backfill", async_handle_backfill)
 
     return True
 
 
-async def async_handle_backfill(hass: HomeAssistant, call: ServiceCall):  # noqa: C901
+async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     """Handle the service call to backfill historical data."""
     _LOGGER.info("Backfill service called: %s", call.data)
+    hass = call.hass
 
     use_all = call.data.get("all", False)
     start_str = call.data.get("start")
