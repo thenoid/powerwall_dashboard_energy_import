@@ -29,3 +29,56 @@ backfill:
       example: "My Powerwall"
       selector:
         text:
+
+migrate_from_teslemetry:
+  name: Migrate from Teslemetry
+  description: >
+    Migrates historical energy statistics from Teslemetry entities to this integration's entities.
+    This preserves your Energy Dashboard history while transitioning to the custom integration.
+  fields:
+    auto_discover:
+      name: Auto-discover entities
+      description: "Automatically find Teslemetry energy entities to migrate."
+      default: true
+      selector:
+        boolean:
+    entity_mapping:
+      name: Manual entity mapping
+      description: "Override auto-discovery with manual entity mappings (JSON format)."
+      example: '{"sensor.tesla_home_energy": "sensor.powerwall_dashboard_home_usage_daily"}'
+      selector:
+        text:
+          multiline: true
+    start_date:
+      name: Start date
+      description: "Earliest date to migrate (YYYY-MM-DD). Leave empty for all available data."
+      example: "2023-01-01"
+      selector:
+        text:
+    end_date:
+      name: End date
+      description: "Latest date to migrate (YYYY-MM-DD). Leave empty for all available data."
+      example: "2024-12-31"
+      selector:
+        text:
+    dry_run:
+      name: Dry run
+      description: "Preview migration without importing data."
+      default: false
+      selector:
+        boolean:
+    overwrite_existing:
+      name: Overwrite existing statistics
+      description: "Replace existing statistics in target entities."
+      default: false
+      selector:
+        boolean:
+    merge_strategy:
+      name: Merge strategy
+      description: "How to handle overlapping data with InfluxDB backfill."
+      default: "prioritize_influx"
+      selector:
+        select:
+          options:
+            - "prioritize_influx"
+            - "prioritize_teslemetry"
