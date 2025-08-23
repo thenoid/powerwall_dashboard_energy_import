@@ -5,11 +5,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, timedelta, timezone
 
-from homeassistant.components.recorder import get_instance
-from homeassistant.components.recorder.statistics import (
-    StatisticMetaData,
-    async_import_statistics,
-)
+# Recorder imports removed - we now use Spook's service instead
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.const import UnitOfEnergy
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -74,6 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     """Handle the service call to backfill historical data."""
+    _LOGGER.info("=== BACKFILL SERVICE STARTING ===")
     _LOGGER.info("Backfill service called: %s", call.data)
     hass = call.hass
 
@@ -81,6 +78,9 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     start_str = call.data.get("start")
     end_str = call.data.get("end")
     sensor_prefix = call.data.get("sensor_prefix")
+    
+    _LOGGER.info("Parameters - all: %s, start: %s, end: %s, prefix: %s", 
+                use_all, start_str, end_str, sensor_prefix)
 
     if not use_all and not start_str:
         _LOGGER.error(
@@ -89,9 +89,15 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
         return
 
     target_entry: ConfigEntry | None = None
+    available_entries = hass.config_entries.async_entries(DOMAIN)
+    _LOGGER.info("Found %d integration entries", len(available_entries))
+    
     if sensor_prefix:
-        for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.data.get(CONF_PW_NAME) == sensor_prefix:
+        _LOGGER.info("Looking for entry with sensor_prefix: %s", sensor_prefix)
+        for entry in available_entries:
+            entry_prefix = entry.data.get(CONF_PW_NAME)
+            _LOGGER.info("Checking entry %s with prefix: %s", entry.entry_id, entry_prefix)
+            if entry_prefix == sensor_prefix:
                 target_entry = entry
                 break
         if not target_entry:
@@ -101,11 +107,13 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             )
             return
     else:
-        if len(hass.config_entries.async_entries(DOMAIN)) > 1:
+        if len(available_entries) > 1:
             _LOGGER.warning(
                 "Multiple Powerwall integrations found. Using the first one. Specify 'sensor_prefix' to target a specific one."
             )
-        target_entry = hass.config_entries.async_entries(DOMAIN)[0]
+        target_entry = available_entries[0]
+    
+    _LOGGER.info("Using config entry: %s", target_entry.entry_id)
 
     store = hass.data[DOMAIN][target_entry.entry_id]
     client: InfluxClient = store["client"]
@@ -138,10 +146,15 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     )
 
     ent_reg = async_get_entity_registry(hass)
+    _LOGGER.info("Starting entity processing...")
 
     for sensor_id_suffix, influx_field in BACKFILL_FIELDS.items():
+        _LOGGER.info("Processing sensor: %s -> %s", sensor_id_suffix, influx_field)
         unique_id = f"{target_entry.entry_id}:powerwall_dashboard_{sensor_id_suffix}"
+        _LOGGER.info("Looking for unique_id: %s", unique_id)
+        
         entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+        _LOGGER.info("Found entity_id: %s", entity_id)
 
         if not entity_id:
             _LOGGER.warning("Could not find entity for unique_id: %s", unique_id)
@@ -151,8 +164,12 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
         if not entity_entry:
             _LOGGER.warning("Could not find entity registry entry for: %s", entity_id)
             continue
+            
+        _LOGGER.info("Found entity entry for: %s", entity_id)
 
         _LOGGER.debug("Processing backfill for %s (%s)", entity_id, influx_field)
+        _LOGGER.info("Entity details - ID: %s, Name: %s, Original Name: %s", 
+                    entity_id, entity_entry.name, entity_entry.original_name)
 
         metadata = StatisticMetaData(
             has_mean=False,
@@ -162,6 +179,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             statistic_id=entity_id,
             unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         )
+        
+        _LOGGER.info("Statistics metadata: %s", metadata)
 
         stats = []
         current_date = start_date
@@ -190,9 +209,33 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
         if stats:
             _LOGGER.info("Importing %d statistics for %s", len(stats), entity_id)
-            await get_instance(hass).async_add_executor_job(
-                async_import_statistics, hass, metadata, stats
-            )
+            _LOGGER.info("Sample stat: %s", stats[0] if stats else "None")
+            
+            # Check if Spook's recorder.import_statistics service is available
+            if not hass.services.has_service("recorder", "import_statistics"):
+                _LOGGER.error(
+                    "Backfill requires Spook integration for recorder.import_statistics service. "
+                    "Install Spook from https://github.com/frenck/spook or HACS. "
+                    "The built-in HA statistics API cannot import data for entities with state_class set."
+                )
+                continue
+            
+            try:
+                service_data = {
+                    "statistic_id": entity_id,
+                    "source": DOMAIN,
+                    "has_mean": False,
+                    "has_sum": True,
+                    "unit_of_measurement": "kWh",
+                    "name": entity_entry.name or entity_entry.original_name,
+                    "stats": [{"start": stat["start"].isoformat(), "sum": stat["sum"]} for stat in stats]
+                }
+                await hass.services.async_call("recorder", "import_statistics", service_data)
+                _LOGGER.info("Successfully imported %d statistics via Spook for %s", len(stats), entity_id)
+            except Exception as e:
+                _LOGGER.error("Failed to import statistics for %s: %s", entity_id, e)
+                _LOGGER.error("Service data was: %s", service_data)
+                _LOGGER.error("Stats sample: %s", stats[0] if stats else "None")
         else:
             _LOGGER.info("No new statistics to import for %s", entity_id)
 
