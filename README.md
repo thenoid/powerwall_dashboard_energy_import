@@ -23,6 +23,32 @@ Copy the `custom_components/powerwall_dashboard_energy_import/` folder into your
 3. Enter your InfluxDB **Host**, **Port** (default `8086`), **Database** (e.g., `powerwall`), and optional **Username/Password**.
 4. On success, sensors appear under the device **"Powerwall Dashboard (InfluxDB)"**.
 
+## Backfill Service
+Import historical statistics from InfluxDB into Home Assistant's Energy Dashboard:
+
+### Prerequisites
+**Requires [Spook integration](https://github.com/frenck/spook)** for `recorder.import_statistics` service. Install via:
+- HACS: Search for "Spook 👻"  
+- Manual: https://github.com/frenck/spook
+
+### Usage
+```yaml
+action: powerwall_dashboard_energy_import.backfill
+data:
+  all: true                    # Import all available history
+  sensor_prefix: "7579 PowerWall"  # Optional: target specific integration
+```
+
+Or import specific date range:
+```yaml
+action: powerwall_dashboard_energy_import.backfill
+data:
+  start: "2024-01-01"
+  end: "2024-12-31"
+```
+
+⚠️ **Warning**: This directly modifies the recorder database. Use with caution and backup your database first.
+
 ## Sensors
 - **Battery Charged (kWh)** — integral of `to_pw` (positive) since midnight.
 - **Battery Discharged (kWh)** — integral of `from_pw` (positive) since midnight.
