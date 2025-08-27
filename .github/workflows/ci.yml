@@ -166,7 +166,7 @@ jobs:
           pip install influxdb
       - name: Run safety check
         run: |
-          safety scan --output json --output-file safety-report.json || true
+          safety scan --save-as json safety-report.json || true
           safety scan || true
       - name: Upload vulnerability scan results
         uses: actions/upload-artifact@v4
