@@ -216,21 +216,25 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
             if daily_total > 0:
                 cumulative_total += daily_total
-                stat_start = datetime(
-                    current_date.year,
-                    current_date.month,
-                    current_date.day,
-                    0,
-                    0,
-                    0,
-                    tzinfo=timezone.utc,
-                )
-                stats.append(
-                    {
-                        "start": stat_start,
-                        "sum": cumulative_total,
-                    }
-                )
+                # Generate hourly statistics for the day to properly distribute on timeline
+                for hour in range(24):
+                    stat_start = datetime(
+                        current_date.year,
+                        current_date.month,
+                        current_date.day,
+                        hour,
+                        0,
+                        0,
+                        tzinfo=timezone.utc,
+                    )
+                    # Distribute the daily total across hours (cumulative within the day)
+                    hourly_cumulative = cumulative_total - daily_total + (daily_total * (hour + 1) / 24)
+                    stats.append(
+                        {
+                            "start": stat_start,
+                            "sum": hourly_cumulative,
+                        }
+                    )
             current_date += timedelta(days=1)
 
         if stats:
