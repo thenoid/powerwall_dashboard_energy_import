@@ -131,9 +131,14 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     series_source = target_entry.options.get("series_source", "autogen.http")
 
     try:
-        end_date = (
-            datetime.strptime(end_str, "%Y-%m-%d").date() if end_str else date.today()
-        )
+        if end_str:
+            # Handle both simple date format and ISO timestamp format
+            if "T" in end_str:
+                end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date()
+            else:
+                end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
+        else:
+            end_date = date.today()
         if use_all:
             first_ts = await hass.async_add_executor_job(
                 client.get_first_timestamp, series_source
@@ -143,7 +148,11 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 return
             start_date = datetime.fromisoformat(first_ts.replace("Z", "+00:00")).date()
         else:
-            start_date = datetime.strptime(start_str or "", "%Y-%m-%d").date()
+            # Handle both simple date format and ISO timestamp format
+            if "T" in (start_str or ""):
+                start_date = datetime.fromisoformat(start_str.replace("Z", "+00:00")).date()
+            else:
+                start_date = datetime.strptime(start_str or "", "%Y-%m-%d").date()
 
     except ValueError as e:
         _LOGGER.error("Invalid date format for start/end: %s", e)
