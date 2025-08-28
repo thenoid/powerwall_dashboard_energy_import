@@ -1,6 +1,4 @@
 .secret
-CLAUDE.md
-GEMINI.md
 logs/
 .python-version
 .direnv
