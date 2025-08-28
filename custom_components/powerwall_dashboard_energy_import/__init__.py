@@ -215,32 +215,29 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             )
 
             if daily_total > 0:
-                # Distribute daily total across 1-minute intervals (1440 minutes per day)
-                minutes_per_day = 1440
-                increment_per_minute = daily_total / minutes_per_day
+                # Distribute daily total across 24 hourly intervals (required by HA statistics)
+                hours_per_day = 24
+                increment_per_hour = daily_total / hours_per_day
                 
-                for minute in range(minutes_per_day):
-                    hour = minute // 60
-                    minute_in_hour = minute % 60
-                    
+                for hour in range(hours_per_day):
                     stat_start = datetime(
                         current_date.year,
                         current_date.month,
                         current_date.day,
                         hour,
-                        minute_in_hour,
-                        0,
+                        0,  # Minutes must be 0 for HA statistics
+                        0,  # Seconds must be 0 for HA statistics
                         tzinfo=timezone.utc,
                     )
                     
-                    # Calculate cumulative total at this point in time
-                    daily_progress = increment_per_minute * (minute + 1)
-                    cumulative_at_point = cumulative_total - daily_total + daily_progress
+                    # Calculate cumulative total at this hour
+                    hourly_progress = increment_per_hour * (hour + 1)
+                    cumulative_at_hour = cumulative_total - daily_total + hourly_progress
                     
                     stats.append(
                         {
                             "start": stat_start,
-                            "sum": cumulative_at_point,
+                            "sum": cumulative_at_hour,
                         }
                     )
                 
