@@ -245,7 +245,7 @@ async def test_import_statistics_via_spook():
     # Check service data - it should be in call_args[0][2] or in kwargs
     service_data = call_args[0][2] if len(call_args[0]) > 2 else call_args[1]
     assert service_data["statistic_id"] == "sensor.powerwall_dashboard_home_usage_daily"
-    assert service_data["source"] == "powerwall_dashboard_energy_import"
+    assert service_data["source"] == "recorder"
     assert service_data["has_mean"] is True
     assert service_data["has_sum"] is True
     assert service_data["unit_of_measurement"] == "kWh"

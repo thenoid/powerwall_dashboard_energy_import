@@ -238,15 +238,12 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             try:
                 service_data = {
                     "statistic_id": entity_id,
-                    "source": DOMAIN,
+                    "source": "recorder",
                     "has_mean": False,
                     "has_sum": True,
                     "unit_of_measurement": "kWh",
                     "name": entity_entry.name or entity_entry.original_name,
-                    "stats": [
-                        {"start": stat["start"].isoformat(), "sum": stat["sum"]}  # type: ignore[attr-defined]
-                        for stat in stats
-                    ],
+                    "stats": stats,
                 }
                 await hass.services.async_call(
                     "recorder", "import_statistics", service_data
@@ -605,7 +602,7 @@ async def _import_statistics_via_spook(
     # Build service data for Spook
     service_data = {
         "statistic_id": entity_id,
-        "source": DOMAIN,
+        "source": "recorder",
         "has_mean": any("mean" in stat for stat in statistics_data),
         "has_sum": any("sum" in stat for stat in statistics_data),
         "unit_of_measurement": "kWh",
