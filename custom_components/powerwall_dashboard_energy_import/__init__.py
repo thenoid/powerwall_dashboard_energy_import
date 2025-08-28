@@ -198,6 +198,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
         # _LOGGER.info("Statistics metadata: %s", metadata)
 
         stats = []
+        cumulative_total = 0.0
         current_date = start_date
         while current_date <= end_date:
             daily_total = await hass.async_add_executor_job(
@@ -205,6 +206,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             )
 
             if daily_total > 0:
+                cumulative_total += daily_total
                 stat_start = datetime(
                     current_date.year,
                     current_date.month,
@@ -217,7 +219,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 stats.append(
                     {
                         "start": stat_start,
-                        "sum": daily_total,
+                        "sum": cumulative_total,
                     }
                 )
             current_date += timedelta(days=1)
