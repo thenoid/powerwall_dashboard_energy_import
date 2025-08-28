@@ -215,23 +215,36 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             )
 
             if daily_total > 0:
+                # Distribute daily total across 1-minute intervals (1440 minutes per day)
+                minutes_per_day = 1440
+                increment_per_minute = daily_total / minutes_per_day
+                
+                for minute in range(minutes_per_day):
+                    hour = minute // 60
+                    minute_in_hour = minute % 60
+                    
+                    stat_start = datetime(
+                        current_date.year,
+                        current_date.month,
+                        current_date.day,
+                        hour,
+                        minute_in_hour,
+                        0,
+                        tzinfo=timezone.utc,
+                    )
+                    
+                    # Calculate cumulative total at this point in time
+                    daily_progress = increment_per_minute * (minute + 1)
+                    cumulative_at_point = cumulative_total - daily_total + daily_progress
+                    
+                    stats.append(
+                        {
+                            "start": stat_start,
+                            "sum": cumulative_at_point,
+                        }
+                    )
+                
                 cumulative_total += daily_total
-                # Create statistic at end of day (23:59:59) for proper daily aggregation
-                stat_start = datetime(
-                    current_date.year,
-                    current_date.month,
-                    current_date.day,
-                    23,
-                    59,
-                    59,
-                    tzinfo=timezone.utc,
-                )
-                stats.append(
-                    {
-                        "start": stat_start,
-                        "sum": cumulative_total,
-                    }
-                )
             current_date += timedelta(days=1)
 
         if stats:
