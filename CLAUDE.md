@@ -19,6 +19,9 @@ Current Version: 0.4.6 (SEMVER followed strictly).
 
 ⚡ Critical Lessons Learned
 **Teslemetry Data Structure Issue (2025-08-30):**
+- Teslemetry provides DUPLICATE daily totals (15.5 kWh) repeated 24 times per day
+- NOT actual hourly values (0.6 kWh per hour)
+- Previous bug: Blindly summed duplicates (24 × 15.5 = 372 kWh massive anomalies)
 - **ALWAYS** test data assumptions with realistic examples before implementing aggregation logic
 - **NEVER** assume external data follows expected patterns without validation
 
