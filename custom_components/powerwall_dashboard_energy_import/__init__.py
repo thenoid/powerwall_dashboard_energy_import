@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import zoneinfo
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 # Recorder imports removed - we now use Spook's service instead
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
@@ -856,12 +857,93 @@ async def _check_existing_statistics(
         return False
 
 
+def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
+    """Convert hourly statistics to daily statistics by grouping by date and summing values."""
+    if not hourly_stats:
+        return []
+
+    from collections import defaultdict
+    from datetime import datetime
+
+    daily_stats: dict[str, dict[str, float]] = defaultdict(
+        lambda: {"sum": 0.0, "mean": 0.0, "min": float("inf"), "max": 0.0, "count": 0.0}
+    )
+
+    for stat in hourly_stats:
+        if "start" not in stat:
+            continue
+
+        # Parse the timestamp and get the date
+        start_time = stat["start"]
+        if isinstance(start_time, str):
+            # Parse ISO format timestamp
+            try:
+                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+            except ValueError:
+                _LOGGER.warning("Could not parse timestamp: %s", start_time)
+                continue
+        else:
+            dt = start_time
+
+        # Get the date as string in YYYY-MM-DD format
+        date_str = dt.date().isoformat()
+
+        # Aggregate the values for this date
+        daily_stat = daily_stats[date_str]
+
+        if "sum" in stat and stat["sum"] is not None:
+            daily_stat["sum"] += stat["sum"]
+        if "mean" in stat and stat["mean"] is not None:
+            daily_stat["mean"] += stat["mean"]
+            daily_stat["count"] += 1
+        if "min" in stat and stat["min"] is not None:
+            daily_stat["min"] = min(daily_stat["min"], stat["min"])
+        if "max" in stat and stat["max"] is not None:
+            daily_stat["max"] = max(daily_stat["max"], stat["max"])
+
+    # Convert aggregated data to final format
+    result = []
+    for date_str, daily_stat in sorted(daily_stats.items()):
+        # Use midnight UTC as the start time for daily statistics
+        start_time = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
+
+        final_stat: dict[str, Any] = {"start": start_time}
+
+        # Add aggregated values
+        if daily_stat["sum"] > 0:
+            final_stat["sum"] = daily_stat["sum"]
+        if daily_stat["count"] > 0:
+            final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
+        if daily_stat["min"] != float("inf"):
+            final_stat["min"] = daily_stat["min"]
+        if daily_stat["max"] > 0:
+            final_stat["max"] = daily_stat["max"]
+
+        result.append(final_stat)
+
+    _LOGGER.debug(
+        "Converted %d hourly statistics to %d daily statistics",
+        len(hourly_stats),
+        len(result),
+    )
+    return result
+
+
 async def _import_statistics_via_spook(
     hass: HomeAssistant, entity_id: str, entity_entry, statistics_data: list
 ):
     """Import statistics data using Spook's recorder.import_statistics service."""
     if not statistics_data:
         return
+
+    # Convert hourly statistics to daily statistics for daily sensors
+    if "_daily" in entity_id:
+        statistics_data = _convert_hourly_to_daily_statistics(statistics_data)
+        if not statistics_data:
+            _LOGGER.warning(
+                "No daily statistics generated from hourly data for %s", entity_id
+            )
+            return
 
     # Convert statistics format for Spook import
     spook_stats = []
