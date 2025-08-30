@@ -10,6 +10,7 @@ from datetime import date, datetime, timedelta, timezone
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.entity_registry import async_get as async_get_entity_registry
+from homeassistant.util import slugify
 
 from .config_flow import OptionsFlowHandler
 from .const import (
@@ -105,9 +106,16 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     if sensor_prefix:
         _LOGGER.info("Looking for entry with sensor_prefix: %s", sensor_prefix)
         for entry in available_entries:
-            entry_prefix = entry.data.get(CONF_PW_NAME)
+            entry_prefix_raw = entry.data.get(
+                CONF_PW_NAME, entry.entry_id.replace("-", "_")
+            )
+            # Convert to entity-safe format using Home Assistant's official slugify
+            entry_prefix = slugify(entry_prefix_raw, separator="_")
             _LOGGER.info(
-                "Checking entry %s with prefix: %s", entry.entry_id, entry_prefix
+                "Checking entry %s with raw prefix: %s, entity prefix: %s",
+                entry.entry_id,
+                entry_prefix_raw,
+                entry_prefix,
             )
             if entry_prefix == sensor_prefix:
                 target_entry = entry
@@ -449,9 +457,16 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
         if sensor_prefix:
             _LOGGER.info("Looking for entry with sensor_prefix: %s", sensor_prefix)
             for entry in available_entries:
-                entry_prefix = entry.data.get(CONF_PW_NAME)
+                entry_prefix_raw = entry.data.get(
+                    CONF_PW_NAME, entry.entry_id.replace("-", "_")
+                )
+                # Convert to entity-safe format using Home Assistant's official slugify
+                entry_prefix = slugify(entry_prefix_raw, separator="_")
                 _LOGGER.info(
-                    "Checking entry %s with prefix: %s", entry.entry_id, entry_prefix
+                    "Checking entry %s with raw prefix: %s, entity prefix: %s",
+                    entry.entry_id,
+                    entry_prefix_raw,
+                    entry_prefix,
                 )
                 if entry_prefix == sensor_prefix:
                     target_entry = entry
@@ -728,9 +743,11 @@ async def _discover_teslemetry_entities(
 
         if our_pattern:
             # Use the sensor prefix to build our entity ID
-            sensor_prefix = target_entry.data.get(
+            sensor_prefix_raw = target_entry.data.get(
                 CONF_PW_NAME, target_entry.entry_id.replace("-", "_")
             )
+            # Convert to entity-safe format using Home Assistant's official slugify
+            sensor_prefix = slugify(sensor_prefix_raw, separator="_")
             our_entity_id = f"sensor.{sensor_prefix}_{our_pattern}"
             teslemetry_mapping[entity.entity_id] = our_entity_id
             _LOGGER.debug(
