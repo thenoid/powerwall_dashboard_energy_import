@@ -857,13 +857,59 @@ async def _check_existing_statistics(
         return False
 
 
+def _parse_hourly_stat_timestamp(start_time: Any) -> datetime | None:
+    """Parse a timestamp from hourly statistics."""
+    from datetime import datetime
+
+    if isinstance(start_time, str):
+        try:
+            return datetime.fromisoformat(start_time.replace("Z", "+00:00"))
+        except ValueError:
+            _LOGGER.warning("Could not parse timestamp: %s", start_time)
+            return None
+    return start_time
+
+
+def _aggregate_hourly_stat(stat: dict, daily_stat: dict[str, float]) -> None:
+    """Aggregate a single hourly statistic into daily totals."""
+    if "sum" in stat and stat["sum"] is not None:
+        daily_stat["sum"] += stat["sum"]
+    if "mean" in stat and stat["mean"] is not None:
+        daily_stat["mean"] += stat["mean"]
+        daily_stat["count"] += 1
+    if "min" in stat and stat["min"] is not None:
+        daily_stat["min"] = min(daily_stat["min"], stat["min"])
+    if "max" in stat and stat["max"] is not None:
+        daily_stat["max"] = max(daily_stat["max"], stat["max"])
+
+
+def _build_final_daily_stat(
+    date_str: str, daily_stat: dict[str, float]
+) -> dict[str, Any]:
+    """Build final daily statistic from aggregated data."""
+    from datetime import datetime
+
+    start_time = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
+    final_stat: dict[str, Any] = {"start": start_time}
+
+    if daily_stat["sum"] > 0:
+        final_stat["sum"] = daily_stat["sum"]
+    if daily_stat["count"] > 0:
+        final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
+    if daily_stat["min"] != float("inf"):
+        final_stat["min"] = daily_stat["min"]
+    if daily_stat["max"] > 0:
+        final_stat["max"] = daily_stat["max"]
+
+    return final_stat
+
+
 def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
     """Convert hourly statistics to daily statistics by grouping by date and summing values."""
     if not hourly_stats:
         return []
 
     from collections import defaultdict
-    from datetime import datetime
 
     daily_stats: dict[str, dict[str, float]] = defaultdict(
         lambda: {"sum": 0.0, "mean": 0.0, "min": float("inf"), "max": 0.0, "count": 0.0}
@@ -873,53 +919,18 @@ def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
         if "start" not in stat:
             continue
 
-        # Parse the timestamp and get the date
-        start_time = stat["start"]
-        if isinstance(start_time, str):
-            # Parse ISO format timestamp
-            try:
-                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            except ValueError:
-                _LOGGER.warning("Could not parse timestamp: %s", start_time)
-                continue
-        else:
-            dt = start_time
+        dt = _parse_hourly_stat_timestamp(stat["start"])
+        if dt is None:
+            continue
 
-        # Get the date as string in YYYY-MM-DD format
         date_str = dt.date().isoformat()
-
-        # Aggregate the values for this date
-        daily_stat = daily_stats[date_str]
-
-        if "sum" in stat and stat["sum"] is not None:
-            daily_stat["sum"] += stat["sum"]
-        if "mean" in stat and stat["mean"] is not None:
-            daily_stat["mean"] += stat["mean"]
-            daily_stat["count"] += 1
-        if "min" in stat and stat["min"] is not None:
-            daily_stat["min"] = min(daily_stat["min"], stat["min"])
-        if "max" in stat and stat["max"] is not None:
-            daily_stat["max"] = max(daily_stat["max"], stat["max"])
+        _aggregate_hourly_stat(stat, daily_stats[date_str])
 
     # Convert aggregated data to final format
-    result = []
-    for date_str, daily_stat in sorted(daily_stats.items()):
-        # Use midnight UTC as the start time for daily statistics
-        start_time = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
-
-        final_stat: dict[str, Any] = {"start": start_time}
-
-        # Add aggregated values
-        if daily_stat["sum"] > 0:
-            final_stat["sum"] = daily_stat["sum"]
-        if daily_stat["count"] > 0:
-            final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
-        if daily_stat["min"] != float("inf"):
-            final_stat["min"] = daily_stat["min"]
-        if daily_stat["max"] > 0:
-            final_stat["max"] = daily_stat["max"]
-
-        result.append(final_stat)
+    result = [
+        _build_final_daily_stat(date_str, daily_stat)
+        for date_str, daily_stat in sorted(daily_stats.items())
+    ]
 
     _LOGGER.debug(
         "Converted %d hourly statistics to %d daily statistics",
@@ -927,6 +938,62 @@ def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
         len(result),
     )
     return result
+
+
+def _convert_stat_to_spook_format(stat: dict) -> dict:
+    """Convert a single statistic to Spook format."""
+    spook_stat = {"start": stat["start"]}
+
+    for key in ["sum", "mean", "min", "max", "state"]:
+        if key in stat:
+            spook_stat[key] = stat[key]
+
+    return spook_stat
+
+
+def _build_spook_service_data(
+    entity_id: str, entity_entry, statistics_data: list, batch: list
+) -> dict:
+    """Build service data for Spook batch import."""
+    return {
+        "statistic_id": entity_id,
+        "source": "recorder",
+        "has_mean": any("mean" in stat for stat in statistics_data),
+        "has_sum": any("sum" in stat for stat in statistics_data),
+        "unit_of_measurement": "kWh",
+        "name": entity_entry.name or entity_entry.original_name or entity_id,
+        "stats": batch,
+    }
+
+
+async def _import_single_batch(
+    hass: HomeAssistant,
+    entity_id: str,
+    service_data: dict,
+    batch_start: int,
+    batch_size: int,
+) -> int:
+    """Import a single batch of statistics and return count imported."""
+    try:
+        await hass.services.async_call("recorder", "import_statistics", service_data)
+        imported_count = len(service_data["stats"])
+        _LOGGER.debug(
+            "Imported batch %d-%d (%d entries) for Teslemetry migration %s",
+            batch_start + 1,
+            batch_start + imported_count,
+            imported_count,
+            entity_id,
+        )
+        return imported_count
+    except Exception as e:
+        _LOGGER.error(
+            "Failed to import batch %d-%d for Teslemetry migration %s: %s",
+            batch_start + 1,
+            batch_start + batch_size,
+            entity_id,
+            e,
+        )
+        return 0
 
 
 async def _import_statistics_via_spook(
@@ -946,63 +1013,21 @@ async def _import_statistics_via_spook(
             return
 
     # Convert statistics format for Spook import
-    spook_stats = []
-    for stat in statistics_data:
-        spook_stat = {"start": stat["start"]}
-
-        # Include available statistic types
-        if "sum" in stat:
-            spook_stat["sum"] = stat["sum"]
-        if "mean" in stat:
-            spook_stat["mean"] = stat["mean"]
-        if "min" in stat:
-            spook_stat["min"] = stat["min"]
-        if "max" in stat:
-            spook_stat["max"] = stat["max"]
-        if "state" in stat:
-            spook_stat["state"] = stat["state"]
-
-        spook_stats.append(spook_stat)
+    spook_stats = [_convert_stat_to_spook_format(stat) for stat in statistics_data]
 
     # Process in batches to avoid exceeding HA's 32KB service call limit
-    batch_size = 100  # Process 100 statistics entries at a time
+    batch_size = 100
     total_imported = 0
 
     for i in range(0, len(spook_stats), batch_size):
         batch = spook_stats[i : i + batch_size]
-
-        # Build service data for Spook batch
-        service_data = {
-            "statistic_id": entity_id,
-            "source": "recorder",
-            "has_mean": any("mean" in stat for stat in statistics_data),
-            "has_sum": any("sum" in stat for stat in statistics_data),
-            "unit_of_measurement": "kWh",
-            "name": entity_entry.name or entity_entry.original_name or entity_id,
-            "stats": batch,
-        }
-
-        try:
-            # Import via Spook
-            await hass.services.async_call(
-                "recorder", "import_statistics", service_data
-            )
-            total_imported += len(batch)
-            _LOGGER.debug(
-                "Imported batch %d-%d (%d entries) for Teslemetry migration %s",
-                i + 1,
-                i + len(batch),
-                len(batch),
-                entity_id,
-            )
-        except Exception as e:
-            _LOGGER.error(
-                "Failed to import batch %d-%d for Teslemetry migration %s: %s",
-                i + 1,
-                i + len(batch),
-                entity_id,
-                e,
-            )
+        service_data = _build_spook_service_data(
+            entity_id, entity_entry, statistics_data, batch
+        )
+        imported_count = await _import_single_batch(
+            hass, entity_id, service_data, i, batch_size
+        )
+        total_imported += imported_count
 
     _LOGGER.debug(
         "Imported %d total statistics entries for %s", total_imported, entity_id
