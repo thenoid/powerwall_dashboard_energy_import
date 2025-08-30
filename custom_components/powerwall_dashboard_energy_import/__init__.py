@@ -858,17 +858,21 @@ async def _check_existing_statistics(
 
 
 def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
-    """Convert hourly statistics to daily statistics by grouping by date and summing values."""
+    """Convert hourly statistics to daily statistics by grouping by date.
+    
+    Handles two cases:
+    1. True hourly data: Different values per hour, sum them by date
+    2. Duplicate daily data: Same value repeated 24 times per day, use first occurrence
+    """
     if not hourly_stats:
         return []
 
     from collections import defaultdict
     from datetime import datetime
 
-    daily_stats: dict[str, dict[str, float]] = defaultdict(
-        lambda: {"sum": 0.0, "mean": 0.0, "min": float("inf"), "max": 0.0, "count": 0.0}
-    )
-
+    # Group stats by date first to detect duplicates
+    stats_by_date: dict[str, list[dict]] = defaultdict(list)
+    
     for stat in hourly_stats:
         if "start" not in stat:
             continue
@@ -876,7 +880,6 @@ def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
         # Parse the timestamp and get the date
         start_time = stat["start"]
         if isinstance(start_time, str):
-            # Parse ISO format timestamp
             try:
                 dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
             except ValueError:
@@ -885,41 +888,58 @@ def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
         else:
             dt = start_time
 
-        # Get the date as string in YYYY-MM-DD format
         date_str = dt.date().isoformat()
+        stats_by_date[date_str].append(stat)
 
-        # Aggregate the values for this date
-        daily_stat = daily_stats[date_str]
-
-        if "sum" in stat and stat["sum"] is not None:
-            daily_stat["sum"] += stat["sum"]
-        if "mean" in stat and stat["mean"] is not None:
-            daily_stat["mean"] += stat["mean"]
-            daily_stat["count"] += 1
-        if "min" in stat and stat["min"] is not None:
-            daily_stat["min"] = min(daily_stat["min"], stat["min"])
-        if "max" in stat and stat["max"] is not None:
-            daily_stat["max"] = max(daily_stat["max"], stat["max"])
-
-    # Convert aggregated data to final format
     result = []
-    for date_str, daily_stat in sorted(daily_stats.items()):
-        # Use midnight UTC as the start time for daily statistics
-        start_time = datetime.fromisoformat(f"{date_str}T00:00:00+00:00")
+    for date_str, day_stats in sorted(stats_by_date.items()):
+        if not day_stats:
+            continue
+            
+        # Check if all sum values are identical (duplicate daily totals)
+        sum_values = [s.get("sum", 0) for s in day_stats if "sum" in s]
+        if sum_values and len(set(sum_values)) == 1:
+            # All identical - this is duplicate daily data, use first occurrence
+            first_stat = day_stats[0]
+            _LOGGER.debug(
+                "Detected duplicate daily totals for %s (%d identical values of %.1f kWh), using first occurrence",
+                date_str, len(sum_values), sum_values[0]
+            )
+            result.append({
+                "start": datetime.fromisoformat(f"{date_str}T00:00:00+00:00"),
+                **{k: v for k, v in first_stat.items() if k != "start"}
+            })
+        else:
+            # Different values - true hourly data, aggregate by summing
+            daily_stat = {"sum": 0.0, "mean": 0.0, "min": float("inf"), "max": 0.0, "count": 0.0}
+            
+            for stat in day_stats:
+                if "sum" in stat and stat["sum"] is not None:
+                    daily_stat["sum"] += stat["sum"]
+                if "mean" in stat and stat["mean"] is not None:
+                    daily_stat["mean"] += stat["mean"]
+                    daily_stat["count"] += 1
+                if "min" in stat and stat["min"] is not None:
+                    daily_stat["min"] = min(daily_stat["min"], stat["min"])
+                if "max" in stat and stat["max"] is not None:
+                    daily_stat["max"] = max(daily_stat["max"], stat["max"])
 
-        final_stat: dict[str, Any] = {"start": start_time}
-
-        # Add aggregated values
-        if daily_stat["sum"] > 0:
-            final_stat["sum"] = daily_stat["sum"]
-        if daily_stat["count"] > 0:
-            final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
-        if daily_stat["min"] != float("inf"):
-            final_stat["min"] = daily_stat["min"]
-        if daily_stat["max"] > 0:
-            final_stat["max"] = daily_stat["max"]
-
-        result.append(final_stat)
+            final_stat: dict[str, Any] = {"start": datetime.fromisoformat(f"{date_str}T00:00:00+00:00")}
+            
+            if daily_stat["sum"] > 0:
+                final_stat["sum"] = daily_stat["sum"]
+            if daily_stat["count"] > 0:
+                final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
+            if daily_stat["min"] != float("inf"):
+                final_stat["min"] = daily_stat["min"]
+            if daily_stat["max"] > 0:
+                final_stat["max"] = daily_stat["max"]
+                
+            _LOGGER.debug(
+                "Aggregated true hourly data for %s: %d entries summed to %.1f kWh",
+                date_str, len(day_stats), final_stat.get("sum", 0)
+            )
+            result.append(final_stat)
 
     _LOGGER.debug(
         "Converted %d hourly statistics to %d daily statistics",
