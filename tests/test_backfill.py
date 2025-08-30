@@ -54,5 +54,7 @@ def test_spook_service_data_format():
     assert service_data["unit_of_measurement"] == "kWh"
     assert service_data["name"] == "Test Energy Sensor"
     assert len(service_data["stats"]) == 2
-    assert service_data["stats"][0]["start"] == datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc)
+    assert service_data["stats"][0]["start"] == datetime(
+        2024, 1, 1, 0, 0, tzinfo=timezone.utc
+    )
     assert service_data["stats"][0]["sum"] == 10.5

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import zoneinfo
 from datetime import date, datetime, timedelta, timezone
 
 # Recorder imports removed - we now use Spook's service instead
@@ -131,9 +132,14 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     series_source = target_entry.options.get("series_source", "autogen.http")
 
     try:
-        end_date = (
-            datetime.strptime(end_str, "%Y-%m-%d").date() if end_str else date.today()
-        )
+        if end_str:
+            # Handle both simple date format and ISO timestamp format
+            if "T" in end_str:
+                end_date = datetime.fromisoformat(end_str.replace("Z", "+00:00")).date()
+            else:
+                end_date = datetime.strptime(end_str, "%Y-%m-%d").date()
+        else:
+            end_date = date.today()
         if use_all:
             first_ts = await hass.async_add_executor_job(
                 client.get_first_timestamp, series_source
@@ -143,7 +149,16 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 return
             start_date = datetime.fromisoformat(first_ts.replace("Z", "+00:00")).date()
         else:
-            start_date = datetime.strptime(start_str or "", "%Y-%m-%d").date()
+            if not start_str:
+                _LOGGER.error("Start date is required when 'all' is not specified.")
+                return
+            # Handle both simple date format and ISO timestamp format
+            if "T" in start_str:
+                start_date = datetime.fromisoformat(
+                    start_str.replace("Z", "+00:00")
+                ).date()
+            else:
+                start_date = datetime.strptime(start_str, "%Y-%m-%d").date()
 
     except ValueError as e:
         _LOGGER.error("Invalid date format for start/end: %s", e)
@@ -198,28 +213,70 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
         # _LOGGER.info("Statistics metadata: %s", metadata)
 
         stats = []
+        cumulative_base = 0.0  # Running total from previous days
         current_date = start_date
         while current_date <= end_date:
-            daily_total = await hass.async_add_executor_job(
-                client.get_daily_kwh, influx_field, current_date, series_source
+            # Get realistic hourly energy data instead of artificially splitting daily total
+            hourly_values = await hass.async_add_executor_job(
+                client.get_hourly_kwh, influx_field, current_date, series_source
             )
 
+            # Use Home Assistant's configured timezone
+            ha_timezone = hass.config.time_zone
+            tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
+            _LOGGER.info(
+                "Using timezone %s for statistics timestamps (current date: %s)",
+                ha_timezone or "UTC",
+                current_date,
+            )
+
+            daily_total = sum(hourly_values)
             if daily_total > 0:
-                stat_start = datetime(
-                    current_date.year,
-                    current_date.month,
-                    current_date.day,
-                    0,
-                    0,
-                    0,
-                    tzinfo=timezone.utc,
+                _LOGGER.info(
+                    "DEBUG: Processing %s with total %.3f kWh across %d hours",
+                    current_date,
+                    daily_total,
+                    len([h for h in hourly_values if h > 0]),
                 )
-                stats.append(
-                    {
-                        "start": stat_start,
-                        "sum": daily_total,
-                    }
-                )
+
+                # Build cumulative statistics from actual hourly data
+                cumulative_progress = 0.0
+                for hour in range(24):
+                    hourly_energy = hourly_values[hour]
+                    cumulative_progress += hourly_energy
+
+                    stat_start = datetime(
+                        current_date.year,
+                        current_date.month,
+                        current_date.day,
+                        hour,
+                        0,  # Minutes must be 0 for HA statistics
+                        0,  # Seconds must be 0 for HA statistics
+                        tzinfo=tz,
+                    )
+
+                    # Calculate cumulative total at this hour
+                    cumulative_at_hour = cumulative_base + cumulative_progress
+
+                    stats.append(
+                        {
+                            "start": stat_start,
+                            "sum": cumulative_at_hour,
+                        }
+                    )
+
+                    # Debug logging for first few entries
+                    if hour < 3:
+                        _LOGGER.info(
+                            "DEBUG: Hour %d - timestamp: %s, hourly: %.3f kWh, cumulative: %.3f kWh",
+                            hour,
+                            stat_start.isoformat(),
+                            hourly_energy,
+                            cumulative_at_hour,
+                        )
+
+                # Update cumulative base for next day
+                cumulative_base += daily_total
             current_date += timedelta(days=1)
 
         if stats:
@@ -235,28 +292,67 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 )
                 continue
 
-            try:
-                service_data = {
-                    "statistic_id": entity_id,
-                    "source": "recorder",
-                    "has_mean": False,
-                    "has_sum": True,
-                    "unit_of_measurement": "kWh",
-                    "name": entity_entry.name or entity_entry.original_name,
-                    "stats": stats,
-                }
-                await hass.services.async_call(
-                    "recorder", "import_statistics", service_data
-                )
-                _LOGGER.info(
-                    "Successfully imported %d statistics via Spook for %s",
-                    len(stats),
-                    entity_id,
-                )
-            except Exception as e:
-                _LOGGER.error("Failed to import statistics for %s: %s", entity_id, e)
-                _LOGGER.error("Service data was: %s", service_data)
-                _LOGGER.error("Stats sample: %s", stats[0] if stats else "None")
+            # Process in batches to avoid exceeding HA's 32KB service call limit
+            batch_size = 100  # Process 100 statistics entries at a time
+            total_imported = 0
+
+            for i in range(0, len(stats), batch_size):
+                batch = stats[i : i + batch_size]
+                try:
+                    service_data = {
+                        "statistic_id": entity_id,
+                        "source": "recorder",
+                        "has_mean": False,
+                        "has_sum": True,
+                        "unit_of_measurement": "kWh",
+                        "name": entity_entry.name or entity_entry.original_name,
+                        "stats": batch,
+                    }
+                    # Debug: log first few entries of first batch
+                    if i == 0 and len(batch) > 0:
+                        _LOGGER.info(
+                            "DEBUG: First batch sample for %s - First 3 entries:",
+                            entity_id,
+                        )
+                        for j, stat_dict in enumerate(batch[:3]):
+                            # stat_dict is a dict with statistics data
+                            start_time = stat_dict["start"]
+                            sum_value = stat_dict["sum"]
+                            _LOGGER.info(
+                                "  Entry %d: start=%s, sum=%.3f",
+                                j + 1,
+                                start_time.isoformat()
+                                if hasattr(start_time, "isoformat")
+                                else start_time,
+                                sum_value,
+                            )
+
+                    await hass.services.async_call(
+                        "recorder", "import_statistics", service_data
+                    )
+                    total_imported += len(batch)
+                    _LOGGER.info(
+                        "Imported batch %d-%d (%d entries) for %s",
+                        i + 1,
+                        i + len(batch),
+                        len(batch),
+                        entity_id,
+                    )
+                except Exception as e:
+                    _LOGGER.error(
+                        "Failed to import batch %d-%d for %s: %s",
+                        i + 1,
+                        i + len(batch),
+                        entity_id,
+                        e,
+                    )
+                    _LOGGER.error("Batch sample: %s", batch[0] if batch else "None")
+
+            _LOGGER.info(
+                "Successfully imported %d total statistics via Spook for %s",
+                total_imported,
+                entity_id,
+            )
         else:
             _LOGGER.info("No new statistics to import for %s", entity_id)
 
@@ -283,6 +379,8 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
     hass = call.hass
 
     auto_discover = call.data.get("auto_discover", True)
+    entity_prefix = call.data.get("entity_prefix")
+    sensor_prefix = call.data.get("sensor_prefix")
     entity_mapping = call.data.get("entity_mapping", {})
     start_date_str = call.data.get("start_date")
     end_date_str = call.data.get("end_date")
@@ -291,8 +389,10 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
     merge_strategy = call.data.get("merge_strategy", "prioritize_influx")
 
     _LOGGER.info(
-        "Migration parameters - auto_discover: %s, dry_run: %s, merge_strategy: %s",
+        "Migration parameters - auto_discover: %s, entity_prefix: %s, sensor_prefix: %s, dry_run: %s, merge_strategy: %s",
         auto_discover,
+        entity_prefix,
+        sensor_prefix,
         dry_run,
         merge_strategy,
     )
@@ -312,16 +412,24 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
         # Parse date range if provided
         start_time = None
         end_time = None
+        # Use Home Assistant's configured timezone instead of hardcoded UTC
+        ha_timezone = hass.config.time_zone
+        tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
+        _LOGGER.info(
+            "Using timezone %s for Teslemetry migration date range",
+            ha_timezone or "UTC",
+        )
+
         if start_date_str:
             start_time = (
                 datetime.strptime(start_date_str, "%Y-%m-%d")
-                .replace(tzinfo=timezone.utc)
+                .replace(tzinfo=tz)
                 .isoformat()
             )
         if end_date_str:
             end_time = (
                 datetime.strptime(end_date_str, "%Y-%m-%d")
-                .replace(tzinfo=timezone.utc)
+                .replace(tzinfo=tz)
                 .isoformat()
             )
 
@@ -331,13 +439,55 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
             end_time or "present",
         )
 
+        # Find target Powerwall Dashboard config entry
+        target_entry: ConfigEntry | None = None
+        available_entries = hass.config_entries.async_entries(DOMAIN)
+        _LOGGER.info(
+            "Found %d Powerwall Dashboard integration entries", len(available_entries)
+        )
+
+        if sensor_prefix:
+            _LOGGER.info("Looking for entry with sensor_prefix: %s", sensor_prefix)
+            for entry in available_entries:
+                entry_prefix = entry.data.get(CONF_PW_NAME)
+                _LOGGER.info(
+                    "Checking entry %s with prefix: %s", entry.entry_id, entry_prefix
+                )
+                if entry_prefix == sensor_prefix:
+                    target_entry = entry
+                    break
+            if not target_entry:
+                _LOGGER.error(
+                    "Could not find a Powerwall integration with sensor_prefix: %s",
+                    sensor_prefix,
+                )
+                return
+        else:
+            if len(available_entries) > 1:
+                _LOGGER.warning(
+                    "Multiple Powerwall integrations found. Using the first one. Specify 'sensor_prefix' to target a specific one."
+                )
+            target_entry = available_entries[0]
+
+        _LOGGER.info("Using target config entry: %s", target_entry.entry_id)
+
         # Auto-discover Teslemetry entities if enabled
         teslemetry_entities = {}
         if auto_discover:
-            _LOGGER.info("Auto-discovering Teslemetry energy entities...")
-            teslemetry_entities = await _discover_teslemetry_entities(hass, ent_reg)
+            if entity_prefix:
+                _LOGGER.info(
+                    "Auto-discovering Tesla energy entities with prefix: %s",
+                    entity_prefix,
+                )
+            else:
+                _LOGGER.info(
+                    "Auto-discovering Teslemetry energy entities using legacy pattern matching..."
+                )
+            teslemetry_entities = await _discover_teslemetry_entities(
+                hass, ent_reg, target_entry, entity_prefix
+            )
             _LOGGER.info(
-                "Found %d potential Teslemetry energy entities",
+                "Found %d potential Tesla energy entities",
                 len(teslemetry_entities),
             )
 
@@ -438,36 +588,124 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
         raise
 
 
-async def _discover_teslemetry_entities(hass: HomeAssistant, ent_reg) -> dict:  # noqa: C901
-    """Discover Teslemetry energy entities and map them to our entities."""
-    teslemetry_mapping = {}
-
-    # Common Teslemetry entity patterns for energy sensors
+def _get_teslemetry_patterns() -> tuple[list[str], dict[str, str]]:
+    """Get Tesla/Teslemetry entity patterns and mappings."""
     teslemetry_patterns = [
+        # Home energy patterns
         "home_energy",
-        "solar_energy",
-        "battery_energy",
-        "grid_energy",
         "home_consumption",
+        "home_usage",
+        "load",
+        # Solar energy patterns
+        "solar_energy",
         "solar_production",
+        "solar_generated",
+        "pv",
+        # Battery energy patterns
+        "battery_energy",
         "battery_charge",
         "battery_discharge",
+        "powerwall",
+        # Grid energy patterns
+        "grid_energy",
         "grid_import",
         "grid_export",
+        "utility",
     ]
 
     our_entity_patterns = {
+        # Home energy mappings
         "home": "home_usage_daily",
+        "home_energy": "home_usage_daily",
+        "home_consumption": "home_usage_daily",
+        "home_usage": "home_usage_daily",
+        "load": "home_usage_daily",
+        # Solar energy mappings
         "solar": "solar_generated_daily",
+        "solar_energy": "solar_generated_daily",
+        "solar_production": "solar_generated_daily",
+        "solar_generated": "solar_generated_daily",
+        "pv": "solar_generated_daily",
+        # Battery charge mappings
         "battery_charge": "battery_charged_daily",
-        "battery_discharge": "battery_discharged_daily",
         "battery_energy_in": "battery_charged_daily",
+        # Battery discharge mappings
+        "battery_discharge": "battery_discharged_daily",
         "battery_energy_out": "battery_discharged_daily",
+        "powerwall": "battery_discharged_daily",
+        # Grid import mappings
         "grid_import": "grid_imported_daily",
-        "grid_export": "grid_exported_daily",
         "grid_energy_in": "grid_imported_daily",
+        "utility": "grid_imported_daily",
+        # Grid export mappings
+        "grid_export": "grid_exported_daily",
         "grid_energy_out": "grid_exported_daily",
     }
+
+    return teslemetry_patterns, our_entity_patterns
+
+
+def _match_tesla_entity_to_mapping(
+    entity_id: str, entity_prefix: str | None, our_entity_patterns: dict[str, str]
+) -> str | None:
+    """Match a Tesla entity ID to our entity mapping patterns."""
+    entity_lower = entity_id.lower()
+
+    # Check entity prefix matching if specified
+    if entity_prefix:
+        prefixes = [p.strip().lower() for p in entity_prefix.split(",")]
+        entity_matches = any(prefix in entity_lower for prefix in prefixes)
+        if not entity_matches:
+            return None
+
+    # Priority matching - exact matches first
+    priority_patterns = [
+        ("solar_energy", "solar_generated_daily"),
+        ("solar_production", "solar_generated_daily"),
+        ("solar_generated", "solar_generated_daily"),
+        ("grid_export", "grid_exported_daily"),
+        ("grid_import", "grid_imported_daily"),
+        ("battery_charge", "battery_charged_daily"),
+        ("battery_discharge", "battery_discharged_daily"),
+        ("home_energy", "home_usage_daily"),
+        ("home_usage", "home_usage_daily"),
+    ]
+
+    for pattern, mapping in priority_patterns:
+        if pattern in entity_lower:
+            return mapping
+
+    # Fallback to fuzzy matching
+    for pattern, mapping in our_entity_patterns.items():
+        if pattern in entity_lower:
+            return mapping
+
+    return None
+
+
+async def _discover_teslemetry_entities(
+    hass: HomeAssistant,
+    ent_reg,
+    target_entry: ConfigEntry,
+    entity_prefix: str | None = None,
+) -> dict:
+    """Discover Teslemetry energy entities and map them to our entities.
+
+    Args:
+        hass: Home Assistant instance
+        ent_reg: Entity registry
+        target_entry: Target Powerwall Dashboard config entry to use for entity mapping
+        entity_prefix: Optional entity prefix to search for (e.g., 'my_home', 'tesla_site')
+    """
+    teslemetry_mapping = {}
+
+    _LOGGER.debug(
+        "Starting entity discovery - entity_prefix: %s, scanning entity registry with %d entities",
+        entity_prefix or "None (using legacy discovery)",
+        len(ent_reg.entities),
+    )
+
+    teslemetry_patterns, our_entity_patterns = _get_teslemetry_patterns()
 
     # Scan entity registry for potential Teslemetry entities
     for entity in ent_reg.entities.values():
@@ -476,33 +714,38 @@ async def _discover_teslemetry_entities(hass: HomeAssistant, ent_reg) -> dict:  
 
         # Look for Tesla/Teslemetry entities with energy characteristics
         entity_lower = entity.entity_id.lower()
-        if "tesla" not in entity_lower and "teslemetry" not in entity_lower:
-            continue
 
-        # Check if it's an energy-type entity
-        found_pattern = None
-        for pattern in teslemetry_patterns:
-            if pattern in entity_lower:
-                found_pattern = pattern
-                break
+        # Check legacy discovery if no entity_prefix specified
+        if not entity_prefix:
+            entity_matches = "tesla" in entity_lower or "teslemetry" in entity_lower
+            if not entity_matches:
+                continue
 
-        if not found_pattern:
-            continue
-
-        # Map to our entity format
-        our_pattern = None
-        for key, value in our_entity_patterns.items():
-            if key in found_pattern or key in entity_lower:
-                our_pattern = value
-                break
+        # Try to match this entity to our patterns
+        our_pattern = _match_tesla_entity_to_mapping(
+            entity.entity_id, entity_prefix, our_entity_patterns
+        )
 
         if our_pattern:
-            # Find a matching config entry to build our entity ID
-            for entry in hass.config_entries.async_entries(DOMAIN):
-                our_entity_id = f"sensor.{entry.entry_id.replace('-', '_')}_powerwall_dashboard_{our_pattern}"
-                teslemetry_mapping[entity.entity_id] = our_entity_id
-                break
+            # Use the sensor prefix to build our entity ID
+            sensor_prefix = target_entry.data.get(
+                CONF_PW_NAME, target_entry.entry_id.replace("-", "_")
+            )
+            our_entity_id = f"sensor.{sensor_prefix}_{our_pattern}"
+            teslemetry_mapping[entity.entity_id] = our_entity_id
+            _LOGGER.debug(
+                "Mapped Tesla entity: %s -> %s (pattern: %s, sensor_prefix: %s)",
+                entity.entity_id,
+                our_entity_id,
+                our_pattern,
+                sensor_prefix,
+            )
 
+    _LOGGER.info(
+        "Entity discovery complete - found %d mappings: %s",
+        len(teslemetry_mapping),
+        list(teslemetry_mapping.keys()) if teslemetry_mapping else "None",
+    )
     return teslemetry_mapping
 
 
@@ -514,7 +757,11 @@ async def _extract_teslemetry_statistics(
 ) -> list[dict]:
     """Extract statistics from a Teslemetry entity using recorder.get_statistics."""
     try:
-        service_data = {"statistic_ids": [entity_id], "period": "hour"}
+        service_data = {
+            "statistic_ids": [entity_id],
+            "period": "hour",
+            "types": ["sum", "mean", "min", "max"],
+        }
 
         if start_time:
             service_data["start_time"] = start_time
@@ -530,9 +777,17 @@ async def _extract_teslemetry_statistics(
             return_response=True,
         )
 
+        _LOGGER.debug("Statistics API response for %s: %s", entity_id, response)
+
         # Extract statistics data
-        if response and entity_id in response:
-            result = response[entity_id]
+        if (
+            response
+            and isinstance(response, dict)
+            and "statistics" in response
+            and isinstance(response["statistics"], dict)
+            and entity_id in response["statistics"]
+        ):
+            result = response["statistics"][entity_id]
             if isinstance(result, list):
                 return [stat for stat in result if isinstance(stat, dict)]
             return []
@@ -551,7 +806,11 @@ async def _check_existing_statistics(
 ) -> bool:
     """Check if target entity already has statistics in the specified time range."""
     try:
-        service_data = {"statistic_ids": [entity_id], "period": "hour"}
+        service_data = {
+            "statistic_ids": [entity_id],
+            "period": "hour",
+            "types": ["sum", "mean", "min", "max"],
+        }
 
         if start_time:
             service_data["start_time"] = start_time
@@ -566,7 +825,14 @@ async def _check_existing_statistics(
             return_response=True,
         )
 
-        return bool(response and entity_id in response and response[entity_id])
+        return bool(
+            response
+            and isinstance(response, dict)
+            and "statistics" in response
+            and isinstance(response["statistics"], dict)
+            and entity_id in response["statistics"]
+            and response["statistics"][entity_id]
+        )
 
     except Exception as e:
         _LOGGER.debug("Could not check existing statistics for %s: %s", entity_id, e)
@@ -599,20 +865,49 @@ async def _import_statistics_via_spook(
 
         spook_stats.append(spook_stat)
 
-    # Build service data for Spook
-    service_data = {
-        "statistic_id": entity_id,
-        "source": "recorder",
-        "has_mean": any("mean" in stat for stat in statistics_data),
-        "has_sum": any("sum" in stat for stat in statistics_data),
-        "unit_of_measurement": "kWh",
-        "name": entity_entry.name or entity_entry.original_name or entity_id,
-        "stats": spook_stats,
-    }
+    # Process in batches to avoid exceeding HA's 32KB service call limit
+    batch_size = 100  # Process 100 statistics entries at a time
+    total_imported = 0
 
-    # Import via Spook
-    await hass.services.async_call("recorder", "import_statistics", service_data)
-    _LOGGER.debug("Imported %d statistics entries for %s", len(spook_stats), entity_id)
+    for i in range(0, len(spook_stats), batch_size):
+        batch = spook_stats[i : i + batch_size]
+
+        # Build service data for Spook batch
+        service_data = {
+            "statistic_id": entity_id,
+            "source": "recorder",
+            "has_mean": any("mean" in stat for stat in statistics_data),
+            "has_sum": any("sum" in stat for stat in statistics_data),
+            "unit_of_measurement": "kWh",
+            "name": entity_entry.name or entity_entry.original_name or entity_id,
+            "stats": batch,
+        }
+
+        try:
+            # Import via Spook
+            await hass.services.async_call(
+                "recorder", "import_statistics", service_data
+            )
+            total_imported += len(batch)
+            _LOGGER.debug(
+                "Imported batch %d-%d (%d entries) for Teslemetry migration %s",
+                i + 1,
+                i + len(batch),
+                len(batch),
+                entity_id,
+            )
+        except Exception as e:
+            _LOGGER.error(
+                "Failed to import batch %d-%d for Teslemetry migration %s: %s",
+                i + 1,
+                i + len(batch),
+                entity_id,
+                e,
+            )
+
+    _LOGGER.debug(
+        "Imported %d total statistics entries for %s", total_imported, entity_id
+    )
 
 
 async def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:

@@ -117,13 +117,120 @@ async def test_discover_teslemetry_entities(mock_hass, mock_entity_registry):
         battery_entity
     )
 
-    # Test discovery
-    mapping = await _discover_teslemetry_entities(mock_hass, mock_entity_registry)
+    # Test legacy discovery (no entity_prefix)
+    mapping = await _discover_teslemetry_entities(
+        mock_hass, mock_entity_registry, config_entry
+    )
 
     # Should find Tesla entities and map them
     assert len(mapping) > 0
     assert "sensor.tesla_site_home_energy" in mapping
     assert mapping["sensor.tesla_site_home_energy"].endswith("home_usage_daily")
+
+
+@pytest.mark.asyncio
+async def test_discover_teslemetry_entities_with_prefix(
+    mock_hass, mock_entity_registry
+):
+    """Test auto-discovery with entity_prefix parameter."""
+    # Setup config entries
+    config_entry = Mock()
+    config_entry.entry_id = "test-entry-id"
+    mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
+
+    # Add entities with non-standard naming (like user's my_home_* entities)
+    my_home_solar = Mock()
+    my_home_solar.entity_id = "sensor.my_home_solar_generated"
+    mock_entity_registry.entities["sensor.my_home_solar_generated"] = my_home_solar
+
+    my_home_battery = Mock()
+    my_home_battery.entity_id = "sensor.my_home_battery_charge"
+    mock_entity_registry.entities["sensor.my_home_battery_charge"] = my_home_battery
+
+    # Add a Tesla entity that should NOT be found with my_home prefix
+    tesla_entity = Mock()
+    tesla_entity.entity_id = "sensor.tesla_site_grid_import"
+    mock_entity_registry.entities["sensor.tesla_site_grid_import"] = tesla_entity
+
+    # Test discovery with entity_prefix
+    mapping = await _discover_teslemetry_entities(
+        mock_hass, mock_entity_registry, config_entry, "my_home"
+    )
+
+    # Should find my_home entities but not tesla entities
+    assert len(mapping) == 2
+    assert "sensor.my_home_solar_generated" in mapping
+    assert "sensor.my_home_battery_charge" in mapping
+    assert "sensor.tesla_site_grid_import" not in mapping
+
+    # Verify proper mapping
+    assert mapping["sensor.my_home_solar_generated"].endswith("solar_generated_daily")
+    assert mapping["sensor.my_home_battery_charge"].endswith("battery_charged_daily")
+
+
+@pytest.mark.asyncio
+async def test_discover_teslemetry_entities_multiple_prefixes(mock_hass):
+    """Test auto-discovery with multiple comma-separated prefixes."""
+    # Setup config entries
+    config_entry = Mock()
+    config_entry.entry_id = "test-entry-id"
+    mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
+
+    # Create a fresh entity registry for this test
+    fresh_registry = Mock()
+    fresh_registry.entities = {}
+
+    # Add entities with different prefixes
+    my_home_entity = Mock()
+    my_home_entity.entity_id = "sensor.my_home_solar_generated"
+    fresh_registry.entities["sensor.my_home_solar_generated"] = my_home_entity
+
+    powerwall_entity = Mock()
+    powerwall_entity.entity_id = "sensor.powerwall_battery_discharge"
+    fresh_registry.entities["sensor.powerwall_battery_discharge"] = powerwall_entity
+
+    # Test discovery with multiple prefixes
+    mapping = await _discover_teslemetry_entities(
+        mock_hass, fresh_registry, config_entry, "my_home,powerwall"
+    )
+
+    # Should find both entities
+    assert len(mapping) == 2
+    assert "sensor.my_home_solar_generated" in mapping
+    assert "sensor.powerwall_battery_discharge" in mapping
+
+
+@pytest.mark.asyncio
+async def test_discover_with_sensor_prefix(mock_hass, mock_entity_registry):
+    """Test that sensor_prefix targets the correct config entry for entity mapping."""
+    # Setup multiple config entries with different prefixes
+    config_entry_1 = Mock()
+    config_entry_1.entry_id = "entry-1-id"
+    config_entry_1.data = {"pw_name": "pw001"}
+
+    config_entry_2 = Mock()
+    config_entry_2.entry_id = "entry-2-id"
+    config_entry_2.data = {"pw_name": "pw085"}
+
+    mock_hass.config_entries.async_entries = Mock(
+        return_value=[config_entry_1, config_entry_2]
+    )
+
+    # Add a Tesla entity to map
+    tesla_entity = Mock()
+    tesla_entity.entity_id = "sensor.my_home_grid_exported"
+    mock_entity_registry.entities["sensor.my_home_grid_exported"] = tesla_entity
+
+    # Test with specific sensor_prefix targeting pw085
+    mapping = await _discover_teslemetry_entities(
+        mock_hass, mock_entity_registry, config_entry_2, "my_home"
+    )
+
+    # Should map to the pw085 integration instance (entry-2-id)
+    assert len(mapping) == 1
+    assert "sensor.my_home_grid_exported" in mapping
+    expected_entity_id = "sensor.pw085_grid_exported_daily"
+    assert mapping["sensor.my_home_grid_exported"] == expected_entity_id
 
 
 @pytest.mark.asyncio
@@ -151,7 +258,7 @@ async def test_extract_teslemetry_statistics():
     ]
 
     mock_hass.services.async_call.return_value = {
-        "sensor.tesla_home_energy": sample_stats
+        "statistics": {"sensor.tesla_home_energy": sample_stats}
     }
 
     # Test extraction
@@ -190,9 +297,11 @@ async def test_check_existing_statistics():
 
     # Mock response indicating existing statistics
     mock_hass.services.async_call.return_value = {
-        "sensor.powerwall_dashboard_home_usage_daily": [
-            {"start": "2024-01-01T00:00:00+00:00", "sum": 10.0}
-        ]
+        "statistics": {
+            "sensor.powerwall_dashboard_home_usage_daily": [
+                {"start": "2024-01-01T00:00:00+00:00", "sum": 10.0}
+            ]
+        }
     }
 
     # Test check for existing statistics
@@ -267,6 +376,7 @@ async def test_full_migration_dry_run(
     # Setup mocks
     mock_hass.services.has_service = Mock(return_value=True)  # Spook available
     mock_hass.services.async_call = AsyncMock()
+    mock_hass.config.time_zone = "America/Denver"  # Mock timezone properly
 
     # Mock successful statistics extraction
     sample_stats = [{"start": "2024-01-01T00:00:00+00:00", "sum": 15.5}]
