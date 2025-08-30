@@ -104,6 +104,7 @@ async def test_discover_teslemetry_entities(mock_hass, mock_entity_registry):
     # Setup config entries
     config_entry = Mock()
     config_entry.entry_id = "test-entry-id"
+    config_entry.data = {"pw_name": "test_pw"}
     mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
 
     # Add more diverse Teslemetry entities to registry
@@ -136,6 +137,7 @@ async def test_discover_teslemetry_entities_with_prefix(
     # Setup config entries
     config_entry = Mock()
     config_entry.entry_id = "test-entry-id"
+    config_entry.data = {"pw_name": "test_pw"}
     mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
 
     # Add entities with non-standard naming (like user's my_home_* entities)
@@ -174,6 +176,7 @@ async def test_discover_teslemetry_entities_multiple_prefixes(mock_hass):
     # Setup config entries
     config_entry = Mock()
     config_entry.entry_id = "test-entry-id"
+    config_entry.data = {"pw_name": "test_pw"}
     mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
 
     # Create a fresh entity registry for this test
@@ -524,3 +527,73 @@ def test_service_data_format():
     assert spook_stats[0]["mean"] == 0.65
     assert spook_stats[0]["min"] == 0.0
     assert spook_stats[0]["max"] == 2.5
+
+
+@pytest.mark.asyncio
+async def test_slugify_edge_cases():
+    """Test entity ID normalization with various edge cases."""
+    from homeassistant.util import slugify
+
+    # Test cases with actual slugify behavior
+    test_cases = [
+        ("7579 PW", "7579_pw"),
+        ("Café München", "cafe_munchen"),
+        ("Test's Name", "test_s_name"),  # Apostrophes become separate underscores
+        ("PW-001.V2", "pw_001_v2"),
+        ("測試", "ce_shi"),  # Chinese characters
+        ("Powerwall  123", "powerwall_123"),  # Multiple spaces
+        ("Test---Name", "test_name"),  # Multiple dashes
+        ("", ""),  # Empty string
+        ("123", "123"),  # Numbers only
+        ("PW_123", "pw_123"),  # Existing underscores
+    ]
+
+    for input_text, expected in test_cases:
+        result = slugify(input_text, separator="_")
+        assert result == expected, (
+            f"slugify('{input_text}') = '{result}', expected '{expected}'"
+        )
+
+
+@pytest.mark.asyncio
+async def test_sensor_prefix_matching_edge_cases(mock_hass, mock_entity_registry):
+    """Test sensor prefix matching with various edge cases."""
+    from custom_components.powerwall_dashboard_energy_import import (
+        _discover_teslemetry_entities,
+    )
+
+    # Test cases that would previously fail with manual transformation
+    edge_case_configs = [
+        {"pw_name": "Café München", "expected_prefix": "cafe_munchen"},
+        {
+            "pw_name": "Test's PW",
+            "expected_prefix": "test_s_pw",
+        },  # Apostrophes become underscores
+        {"pw_name": "PW-001.V2", "expected_prefix": "pw_001_v2"},
+        {"pw_name": "PowerWall  123", "expected_prefix": "powerwall_123"},
+    ]
+
+    for config_data in edge_case_configs:
+        # Setup config entry with edge case name
+        config_entry = Mock()
+        config_entry.entry_id = "test-entry-id"
+        config_entry.data = config_data
+        mock_hass.config_entries.async_entries = Mock(return_value=[config_entry])
+
+        # Add a test Tesla entity
+        tesla_entity = Mock()
+        tesla_entity.entity_id = "sensor.my_home_solar_energy"
+        mock_entity_registry.entities = {"sensor.my_home_solar_energy": tesla_entity}
+
+        # Test discovery with entity prefix
+        mapping = await _discover_teslemetry_entities(
+            mock_hass, mock_entity_registry, config_entry, "my_home"
+        )
+
+        # Should successfully map the entity with proper prefix normalization
+        expected_entity_id = (
+            f"sensor.{config_data['expected_prefix']}_solar_generated_daily"
+        )
+        assert len(mapping) == 1
+        assert "sensor.my_home_solar_energy" in mapping
+        assert mapping["sensor.my_home_solar_energy"] == expected_entity_id
