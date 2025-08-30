@@ -42,6 +42,18 @@ migrate_from_teslemetry:
       default: true
       selector:
         boolean:
+    entity_prefix:
+      name: Entity prefix
+      description: "Entity prefix for Tesla entities (e.g., 'my_home', 'tesla_site', 'powerwall'). Helps auto-discovery find entities with non-standard naming."
+      example: "my_home"
+      selector:
+        text:
+    sensor_prefix:
+      name: Sensor prefix
+      description: "Target Powerwall Dashboard integration sensor prefix (e.g., 'pw085'). Ensures migration targets the correct integration instance."
+      example: "pw085"
+      selector:
+        text:
     entity_mapping:
       name: Manual entity mapping
       description: "Override auto-discovery with manual entity mappings (JSON format)."

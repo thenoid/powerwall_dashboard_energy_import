@@ -38,23 +38,23 @@ def test_spook_service_data_format():
     # Build service data as our code would
     service_data = {
         "statistic_id": "sensor.test_energy_daily",
-        "source": "powerwall_dashboard_energy_import",
+        "source": "recorder",
         "has_mean": False,
         "has_sum": True,
         "unit_of_measurement": "kWh",
         "name": entity_entry.name or entity_entry.original_name,
-        "stats": [
-            {"start": stat["start"].isoformat(), "sum": stat["sum"]} for stat in stats
-        ],
+        "stats": stats,
     }
 
     # Verify format matches Spook's expectations
     assert service_data["statistic_id"] == "sensor.test_energy_daily"
-    assert service_data["source"] == "powerwall_dashboard_energy_import"
+    assert service_data["source"] == "recorder"
     assert service_data["has_mean"] is False
     assert service_data["has_sum"] is True
     assert service_data["unit_of_measurement"] == "kWh"
     assert service_data["name"] == "Test Energy Sensor"
     assert len(service_data["stats"]) == 2
-    assert service_data["stats"][0]["start"] == "2024-01-01T00:00:00+00:00"
+    assert service_data["stats"][0]["start"] == datetime(
+        2024, 1, 1, 0, 0, tzinfo=timezone.utc
+    )
     assert service_data["stats"][0]["sum"] == 10.5

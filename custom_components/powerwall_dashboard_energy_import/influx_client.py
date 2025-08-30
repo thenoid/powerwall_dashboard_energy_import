@@ -90,6 +90,36 @@ class InfluxClient:
         result = self.query(query)
         return round(result[0].get("value", 0.0), 3) if result else 0.0
 
+    def get_hourly_kwh(self, field: str, day: date, series: str) -> list[float]:
+        """Fetch hourly kWh values for a given field on a specific day.
+
+        Returns a list of 24 floats representing energy for each hour (0-23).
+        This provides realistic energy distribution instead of artificial even splitting.
+        """
+        day_start = day.isoformat() + "T00:00:00Z"
+        day_end = (day + timedelta(days=1)).isoformat() + "T00:00:00Z"
+
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time >= '{day_start}' AND time < '{day_end}' AND {field} > 0 "
+            f"GROUP BY time(1h) fill(0)"
+        )
+        result = self.query(query)
+
+        # Initialize 24-hour array with zeros
+        hourly_values = [0.0] * 24
+
+        if result:
+            for entry in result:
+                if "time" in entry and "value" in entry:
+                    # Parse hour from timestamp (e.g., "2025-08-22T14:00:00Z" -> 14)
+                    time_str = entry["time"]
+                    hour = int(time_str.split("T")[1].split(":")[0])
+                    if 0 <= hour < 24:
+                        hourly_values[hour] = round(entry.get("value", 0.0), 3)
+
+        return hourly_values
+
     def get_history(self) -> list[str]:
         """Return a list of recent queries (most recent last)."""
         return list(self._history)

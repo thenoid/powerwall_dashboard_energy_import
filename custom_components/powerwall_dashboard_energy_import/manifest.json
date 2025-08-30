@@ -1,7 +1,7 @@
 {
   "domain": "powerwall_dashboard_energy_import",
   "name": "Powerwall Dashboard Energy Import",
-  "version": "0.7.0",
+  "version": "0.11.0",
   "documentation": "https://github.com/thenoid/powerwall_dashboard_energy_import",
   "issue_tracker": "https://github.com/thenoid/powerwall_dashboard_energy_import/issues",
   "codeowners": [
