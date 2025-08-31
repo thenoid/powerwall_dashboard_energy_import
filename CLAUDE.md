@@ -17,12 +17,15 @@ Must be HACS-compatible.
 Sensors aligned with Teslemetry model (state_class, device_class, etc).
 Current Version: 0.4.6 (SEMVER followed strictly).
 
-⚡ Active Issue
-We want to backfill historical statistics from InfluxDB into Home Assistant.
-We crafted a script to back fill the stats from influx -> home assisttant - however it did not work because we hallucinated endpoints.
-We instead are building a back fill service into the integration
+⚡ Critical Lessons Learned
+**Teslemetry Data Structure Issue (2025-08-30):**
+- **ALWAYS** test data assumptions with realistic examples before implementing aggregation logic
+- **NEVER** assume external data follows expected patterns without validation
 
-Problem:
+**Git Workflow Violations:**
+- Branch protection exists for main branch - NEVER commit directly to main
+- Deleting working branches and recreating functionality is dangerous
+- Always use proper merge conflict resolution instead of recreation
 
 🛠️ Open Decision
 
@@ -31,7 +34,32 @@ Problem:
 Do not assume — ask clarifying questions.
 Always bump version numbers SEMVER-style.
 Keep responses concise but detailed where needed.
-User is  technical, prefers direct explanations.
+User is technical, prefers direct explanations.
+**MANDATORY**: Always work in feature branches - NEVER commit directly to main branch.
+
+🌳 Git Workflow - MANDATORY
+**NEVER work directly on main branch. Always use feature branches.**
+
+```bash
+# 1. Create feature branch for ANY changes
+git checkout main
+git pull origin main  
+git checkout -b fix/descriptive-name
+
+# 2. Make changes, test, commit
+git add .
+git commit -m "fix: Clear description of what was fixed"
+
+# 3. Push branch and create PR
+git push origin fix/descriptive-name
+# Create PR via GitHub UI
+
+# 4. After PR approval, merge via GitHub
+# 5. Delete feature branch after merge
+git checkout main
+git pull origin main
+git branch -d fix/descriptive-name
+```
 
 🧪 Test-Driven Development
 MANDATORY: After ANY code changes, run the complete validation suite:
@@ -62,12 +90,19 @@ print('✅ All imports successful')
 "
 ```
 
+**Data Validation Requirements:**
+- Test data assumptions with realistic examples before implementing aggregation
+- Always validate external data structure (e.g., Teslemetry duplicate daily totals)
+- Create test cases that expose incorrect assumptions about data patterns
+
 For substantive changes (new features, logic changes, bug fixes):
-1. Update/add tests FIRST before implementing changes
-2. Run tests to verify they fail (red)  
-3. Implement the minimal code to make tests pass (green)
-4. Run full validation suite (tests + mypy + ruff)
-5. Refactor if needed while keeping all checks green
+1. Create feature branch (see Git Workflow above)
+2. Update/add tests FIRST before implementing changes
+3. Run tests to verify they fail (red)  
+4. Implement the minimal code to make tests pass (green)
+5. Run full validation suite (tests + mypy + ruff)
+6. Refactor if needed while keeping all checks green
+7. Push branch and create PR for review
 
 Test files: `tests/test_sensor.py`, `tests/test_influx_client.py`
 Coverage target: >90%

@@ -363,17 +363,12 @@ async def test_import_statistics_via_spook():
     assert service_data["unit_of_measurement"] == "kWh"
     assert service_data["name"] == "Home Usage (Daily)"
 
-    # Check converted stats format - should be converted to daily
+    # Check converted stats format
     stats = service_data["stats"]
-    assert len(stats) == 1  # Two hourly stats converted to one daily stat
-
-    # Check daily conversion
-    daily_stat = stats[0]
-    from datetime import datetime, timezone
-
-    assert daily_stat["start"] == datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
-    assert daily_stat["sum"] == 46.5  # 15.5 + 31.0
-    assert abs(daily_stat["mean"] - 0.685) < 0.001  # (0.65 + 0.72) / 2
+    assert len(stats) == 2
+    assert stats[0]["start"] == "2024-01-01T00:00:00+00:00"
+    assert stats[0]["sum"] == 15.5
+    assert stats[0]["mean"] == 0.65
 
 
 @pytest.mark.asyncio
@@ -602,101 +597,3 @@ async def test_sensor_prefix_matching_edge_cases(mock_hass, mock_entity_registry
         assert len(mapping) == 1
         assert "sensor.my_home_solar_energy" in mapping
         assert mapping["sensor.my_home_solar_energy"] == expected_entity_id
-
-
-def test_convert_hourly_to_daily_statistics():
-    """Test conversion of hourly statistics to daily statistics."""
-    from datetime import datetime, timezone
-
-    from custom_components.powerwall_dashboard_energy_import import (
-        _convert_hourly_to_daily_statistics,
-    )
-
-    # Mock hourly statistics for 2 days
-    hourly_stats = [
-        # August 30, 2025 - First few hours
-        {
-            "start": "2025-08-30T00:00:00+00:00",
-            "sum": 0.5,
-            "mean": 0.5,
-            "min": 0.0,
-            "max": 1.0,
-        },
-        {
-            "start": "2025-08-30T01:00:00+00:00",
-            "sum": 1.2,
-            "mean": 1.2,
-            "min": 0.8,
-            "max": 1.5,
-        },
-        {
-            "start": "2025-08-30T02:00:00+00:00",
-            "sum": 2.3,
-            "mean": 2.3,
-            "min": 1.0,
-            "max": 3.0,
-        },
-        # August 31, 2025 - One hour
-        {
-            "start": "2025-08-31T00:00:00+00:00",
-            "sum": 1.5,
-            "mean": 1.5,
-            "min": 1.2,
-            "max": 2.0,
-        },
-    ]
-
-    # Convert to daily
-    daily_stats = _convert_hourly_to_daily_statistics(hourly_stats)
-
-    # Should have 2 daily entries
-    assert len(daily_stats) == 2
-
-    # Check August 30 totals
-    aug30_stat = daily_stats[0]
-    assert aug30_stat["start"] == datetime(2025, 8, 30, 0, 0, 0, tzinfo=timezone.utc)
-    assert aug30_stat["sum"] == 4.0  # 0.5 + 1.2 + 2.3
-    assert abs(aug30_stat["mean"] - 1.333333) < 0.0001  # (0.5 + 1.2 + 2.3) / 3
-    assert aug30_stat["min"] == 0.0
-    assert aug30_stat["max"] == 3.0
-
-    # Check August 31 totals
-    aug31_stat = daily_stats[1]
-    assert aug31_stat["start"] == datetime(2025, 8, 31, 0, 0, 0, tzinfo=timezone.utc)
-    assert aug31_stat["sum"] == 1.5
-    assert aug31_stat["mean"] == 1.5
-    assert aug31_stat["min"] == 1.2
-    assert aug31_stat["max"] == 2.0
-
-
-def test_convert_hourly_to_daily_statistics_empty():
-    """Test conversion with empty input."""
-    from custom_components.powerwall_dashboard_energy_import import (
-        _convert_hourly_to_daily_statistics,
-    )
-
-    assert _convert_hourly_to_daily_statistics([]) == []
-    assert _convert_hourly_to_daily_statistics(None) == []
-
-
-def test_convert_hourly_to_daily_statistics_malformed():
-    """Test conversion with malformed data."""
-    from custom_components.powerwall_dashboard_energy_import import (
-        _convert_hourly_to_daily_statistics,
-    )
-
-    # Stats without start time should be skipped
-    hourly_stats = [
-        {"sum": 1.0, "mean": 1.0},  # No start time - should be skipped
-        {
-            "start": "2025-08-30T00:00:00+00:00",
-            "sum": 2.0,
-            "mean": 2.0,
-        },  # Valid
-    ]
-
-    daily_stats = _convert_hourly_to_daily_statistics(hourly_stats)
-
-    # Should only have one valid daily stat
-    assert len(daily_stats) == 1
-    assert daily_stats[0]["sum"] == 2.0

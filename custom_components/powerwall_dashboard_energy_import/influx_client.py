@@ -90,18 +90,55 @@ class InfluxClient:
         result = self.query(query)
         return round(result[0].get("value", 0.0), 3) if result else 0.0
 
-    def get_hourly_kwh(self, field: str, day: date, series: str) -> list[float]:
+    def get_hourly_kwh(
+        self, field: str, day: date, series: str, target_timezone: str = "UTC"
+    ) -> list[float]:
         """Fetch hourly kWh values for a given field on a specific day.
 
         Returns a list of 24 floats representing energy for each hour (0-23).
         This provides realistic energy distribution instead of artificial even splitting.
+
+        Args:
+            field: The field to query (e.g., 'solar_power')
+            day: The date to query for
+            series: The InfluxDB series name
+            target_timezone: Target timezone for hour assignment (default: UTC)
         """
-        day_start = day.isoformat() + "T00:00:00Z"
-        day_end = (day + timedelta(days=1)).isoformat() + "T00:00:00Z"
+        # Convert target day to UTC bounds for InfluxDB query
+        import zoneinfo
+        from datetime import datetime
+
+        # Create timezone objects
+        target_tz = (
+            zoneinfo.ZoneInfo(target_timezone) if target_timezone != "UTC" else None
+        )
+        utc_tz = zoneinfo.ZoneInfo("UTC")
+
+        if target_tz:
+            # Convert day start/end from target timezone to UTC
+            day_start_local = datetime(
+                day.year, day.month, day.day, 0, 0, 0, tzinfo=target_tz
+            )
+            day_end_local = datetime(
+                day.year, day.month, day.day, 23, 59, 59, tzinfo=target_tz
+            )
+            day_start_utc = day_start_local.astimezone(utc_tz)
+            day_end_utc = day_end_local.astimezone(utc_tz)
+        else:
+            # Already in UTC
+            day_start_utc = datetime(
+                day.year, day.month, day.day, 0, 0, 0, tzinfo=utc_tz
+            )
+            day_end_utc = datetime(
+                day.year, day.month, day.day, 23, 59, 59, tzinfo=utc_tz
+            )
+
+        day_start = day_start_utc.isoformat().replace("+00:00", "Z")
+        day_end = day_end_utc.isoformat().replace("+00:00", "Z")
 
         query = (
             f"SELECT integral({field})/1000/3600 AS value FROM {series} "
-            f"WHERE time >= '{day_start}' AND time < '{day_end}' AND {field} > 0 "
+            f"WHERE time >= '{day_start}' AND time <= '{day_end}' AND {field} > 0 "
             f"GROUP BY time(1h) fill(0)"
         )
         result = self.query(query)
@@ -112,11 +149,22 @@ class InfluxClient:
         if result:
             for entry in result:
                 if "time" in entry and "value" in entry:
-                    # Parse hour from timestamp (e.g., "2025-08-22T14:00:00Z" -> 14)
+                    # Parse UTC timestamp and convert to target timezone hour
                     time_str = entry["time"]
-                    hour = int(time_str.split("T")[1].split(":")[0])
-                    if 0 <= hour < 24:
-                        hourly_values[hour] = round(entry.get("value", 0.0), 3)
+                    utc_dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+
+                    if target_tz:
+                        local_dt = utc_dt.astimezone(target_tz)
+                        # Check if this timestamp falls within our target day
+                        if local_dt.date() == day:
+                            hour = local_dt.hour
+                            if 0 <= hour < 24:
+                                hourly_values[hour] = round(entry.get("value", 0.0), 3)
+                    else:
+                        # UTC - parse hour directly
+                        hour = int(time_str.split("T")[1].split(":")[0])
+                        if 0 <= hour < 24:
+                            hourly_values[hour] = round(entry.get("value", 0.0), 3)
 
         return hourly_values
 

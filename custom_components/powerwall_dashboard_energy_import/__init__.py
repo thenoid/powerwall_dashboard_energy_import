@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import logging
 import zoneinfo
-from datetime import date, datetime, timedelta, timezone
-from typing import Any
+from datetime import date, datetime, timezone
 
 # Recorder imports removed - we now use Spook's service instead
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
@@ -85,13 +84,15 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     start_str = call.data.get("start")
     end_str = call.data.get("end")
     sensor_prefix = call.data.get("sensor_prefix")
+    overwrite_existing = call.data.get("overwrite_existing", False)
 
     _LOGGER.info(
-        "Parameters - all: %s, start: %s, end: %s, prefix: %s",
+        "Parameters - all: %s, start: %s, end: %s, prefix: %s, overwrite: %s",
         use_all,
         start_str,
         end_str,
         sensor_prefix,
+        overwrite_existing,
     )
 
     if not use_all and not start_str:
@@ -221,18 +222,164 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
         # _LOGGER.info("Statistics metadata: %s", metadata)
 
+        # Use Home Assistant's configured timezone
+        ha_timezone = hass.config.time_zone
+        tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
+
         stats = []
-        cumulative_base = 0.0  # Running total from previous days
-        current_date = start_date
-        while current_date <= end_date:
-            # Get realistic hourly energy data instead of artificially splitting daily total
-            hourly_values = await hass.async_add_executor_job(
-                client.get_hourly_kwh, influx_field, current_date, series_source
+
+        # Handle overwrite logic BEFORE calculating statistics
+        cumulative_base = 0.0
+        if overwrite_existing:
+            _LOGGER.warning(
+                "Overwrite enabled - clearing existing statistics for %s from %s to %s",
+                entity_id,
+                start_date,
+                end_date,
             )
 
-            # Use Home Assistant's configured timezone
-            ha_timezone = hass.config.time_zone
-            tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
+            # Get the cumulative base BEFORE purging to maintain continuity
+            try:
+                from datetime import timedelta
+
+                from homeassistant.components.recorder.statistics import (
+                    statistics_during_period,
+                )
+
+                # Get statistics from just before the start date
+                # We want the cumulative value at the end of the day BEFORE start_date
+                end_of_previous_day = datetime.combine(
+                    start_date - timedelta(days=1), datetime.max.time()
+                )
+                end_of_previous_day = end_of_previous_day.replace(tzinfo=tz)
+
+                # Query statistics up to end of previous day
+                from typing import Any, cast
+
+                previous_stats = await hass.async_add_executor_job(
+                    cast(Any, statistics_during_period),
+                    hass,
+                    end_of_previous_day - timedelta(hours=1),  # Start 1 hour before
+                    end_of_previous_day,  # End at previous day
+                    {entity_id},
+                    "hour",
+                    None,  # units
+                    {"sum"},  # Only need sum
+                )
+
+                if previous_stats and entity_id in previous_stats:
+                    entity_stats = previous_stats[entity_id]
+                    if entity_stats and len(entity_stats) > 0:
+                        # Get the last (most recent) statistic before our start date
+                        last_stat = entity_stats[-1]
+                        if "sum" in last_stat:
+                            cumulative_base = (
+                                float(last_stat["sum"])
+                                if last_stat["sum"] is not None
+                                else 0.0
+                            )
+                            _LOGGER.info(
+                                "Captured pre-purge cumulative base: %.3f kWh from end of %s",
+                                cumulative_base,
+                                (start_date - timedelta(days=1)).strftime("%Y-%m-%d"),
+                            )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    "Could not get pre-purge cumulative base for %s: %s", entity_id, e
+                )
+                cumulative_base = 0.0
+
+            # Now purge the existing statistics
+            try:
+                # Use Home Assistant's recorder.purge_entities service to clear statistics
+                await hass.services.async_call(
+                    "recorder",
+                    "purge_entities",
+                    {
+                        "entity_id": [entity_id],
+                        "keep_days": 0,  # Remove all data
+                    },
+                )
+                _LOGGER.info(
+                    "Successfully cleared existing statistics for %s", entity_id
+                )
+
+            except Exception as e:
+                _LOGGER.error(
+                    "Failed to clear existing statistics for %s: %s", entity_id, e
+                )
+                return
+        else:
+            # Get the last cumulative value before start_date to maintain continuity
+            try:
+                # Query the last statistic before our start date
+                from datetime import timedelta
+                from typing import Any, cast
+
+                from homeassistant.components.recorder.statistics import (
+                    get_last_statistics,
+                )
+
+                last_stats = await hass.async_add_executor_job(
+                    cast(Any, get_last_statistics),
+                    hass,
+                    1,
+                    entity_id,
+                    True,  # Convert units
+                    {"sum"},  # Only need sum
+                )
+
+                if last_stats and entity_id in last_stats:
+                    last_stat = last_stats[entity_id][
+                        0
+                    ]  # get_last_statistics returns list
+                    if "sum" in last_stat:
+                        cumulative_base = (
+                            float(last_stat["sum"])
+                            if last_stat["sum"] is not None
+                            else 0.0
+                        )
+                        _LOGGER.info(
+                            "Found existing cumulative base: %.3f kWh at %s",
+                            cumulative_base,
+                            last_stat.get("start", "unknown time"),
+                        )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    "Could not get existing cumulative base for %s, starting from 0: %s",
+                    entity_id,
+                    e,
+                )
+                cumulative_base = 0.0
+
+        current_date = start_date
+        while current_date <= end_date:
+            _LOGGER.warning("=== PROCESSING DAY %s ===", current_date)
+            _LOGGER.warning(
+                "Starting cumulative_base for %s: %.3f kWh",
+                current_date,
+                cumulative_base,
+            )
+
+            # Get realistic hourly energy data instead of artificially splitting daily total
+            hourly_values = await hass.async_add_executor_job(
+                client.get_hourly_kwh,
+                influx_field,
+                current_date,
+                series_source,
+                ha_timezone or "UTC",
+            )
+
+            _LOGGER.info(
+                "Retrieved %d hourly values for %s: %s",
+                len(hourly_values),
+                current_date,
+                [f"h{i}={v:.3f}" for i, v in enumerate(hourly_values) if v > 0][
+                    :5
+                ],  # Show first 5 non-zero hours
+            )
             _LOGGER.info(
                 "Using timezone %s for statistics timestamps (current date: %s)",
                 ha_timezone or "UTC",
@@ -274,8 +421,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                         }
                     )
 
-                    # Debug logging for first few entries
-                    if hour < 3:
+                    # Debug logging for first day and first few hours, plus any hour with significant energy
+                    if current_date == start_date and hour < 6:
                         _LOGGER.info(
                             "DEBUG: Hour %d - timestamp: %s, hourly: %.3f kWh, cumulative: %.3f kWh",
                             hour,
@@ -285,7 +432,15 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                         )
 
                 # Update cumulative base for next day
+                old_cumulative_base = cumulative_base
                 cumulative_base += daily_total
+                _LOGGER.info(
+                    "End of day %s: daily_total=%.3f, old_base=%.3f, new_base=%.3f",
+                    current_date,
+                    daily_total,
+                    old_cumulative_base,
+                    cumulative_base,
+                )
             current_date += timedelta(days=1)
 
         if stats:
@@ -300,6 +455,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                     "The built-in HA statistics API cannot import data for entities with state_class set."
                 )
                 continue
+
+            # Overwrite logic has been moved to before statistics calculation
 
             # Process in batches to avoid exceeding HA's 32KB service call limit
             batch_size = 100  # Process 100 statistics entries at a time
@@ -767,6 +924,180 @@ async def _discover_teslemetry_entities(
     return teslemetry_mapping
 
 
+def _check_missing_hours(day_stats: list[dict]) -> None:
+    """Check for missing hours in daily statistics."""
+    hours_present = {
+        stat["time"][:2] for stat in day_stats if isinstance(stat["time"], str)
+    }
+    missing_hours = {f"{h:02d}" for h in range(24)} - hours_present
+    if missing_hours:
+        _LOGGER.debug("  Missing hours: %s", sorted(missing_hours))
+
+
+def _check_large_jumps(day_stats: list[dict]) -> None:
+    """Check for large jumps in cumulative values."""
+    sums = [
+        float(s["sum"])
+        for s in day_stats
+        if s["sum"] is not None and isinstance(s["sum"], (int, float))
+    ]
+    if len(sums) > 1:
+        jumps = [
+            sums[i + 1] - sums[i] for i in range(len(sums) - 1) if sums[i + 1] > sums[i]
+        ]
+        if jumps:
+            max_jump = max(jumps)
+            if max_jump > 10:
+                _LOGGER.debug("  Large cumulative jump detected: %.1f kWh", max_jump)
+
+
+def _log_first_last_entries(day_stats: list[dict]) -> None:
+    """Log first and last entries for the day."""
+    if len(day_stats) > 0:
+        first_sum = day_stats[0]["sum"]
+        first_sum_val = float(first_sum) if isinstance(first_sum, (int, float)) else 0.0
+        _LOGGER.debug(
+            "  First entry: %s - sum=%.1f", day_stats[0]["time"], first_sum_val
+        )
+
+        if len(day_stats) > 1:
+            last_sum = day_stats[-1]["sum"]
+            last_sum_val = (
+                float(last_sum) if isinstance(last_sum, (int, float)) else 0.0
+            )
+            _LOGGER.debug(
+                "  Last entry:  %s - sum=%.1f", day_stats[-1]["time"], last_sum_val
+            )
+
+
+def _check_time_gaps(day_stats: list[dict]) -> None:
+    """Check for time gaps in daily statistics."""
+    for i in range(1, len(day_stats)):
+        curr_time = day_stats[i]["time"]
+        prev_time = day_stats[i - 1]["time"]
+        if isinstance(curr_time, str) and isinstance(prev_time, str):
+            try:
+                curr_hour = int(curr_time[:2])
+                prev_hour = int(prev_time[:2])
+                hour_gap = curr_hour - prev_hour
+                if hour_gap > 2 or (hour_gap < 0 and curr_hour + 24 - prev_hour > 2):
+                    gap_hours = hour_gap if hour_gap > 0 else curr_hour + 24 - prev_hour
+                    _LOGGER.debug(
+                        "  DATA GAP: %s -> %s (gap of %d hours)",
+                        prev_time,
+                        curr_time,
+                        gap_hours,
+                    )
+
+                    curr_sum = day_stats[i]["sum"]
+                    prev_sum = day_stats[i - 1]["sum"]
+                    if isinstance(curr_sum, (int, float)) and isinstance(
+                        prev_sum, (int, float)
+                    ):
+                        _LOGGER.debug(
+                            "    Sum jump: %.1f -> %.1f (diff: %.1f kWh)",
+                            prev_sum,
+                            curr_sum,
+                            curr_sum - prev_sum,
+                        )
+            except (ValueError, IndexError):
+                continue
+
+
+def _analyze_daily_statistics(day_stats: list[dict], date_str: str) -> None:
+    """Analyze daily statistics for patterns and gaps."""
+    _LOGGER.debug("Date %s: %d entries", date_str, len(day_stats))
+    _check_missing_hours(day_stats)
+    _check_large_jumps(day_stats)
+    _log_first_last_entries(day_stats)
+    _check_time_gaps(day_stats)
+
+
+def _get_statistics_service_data(
+    start_time: str | None, end_time: str | None, entity_id: str
+) -> dict:
+    """Prepare service data for statistics API call."""
+    service_data = {
+        "statistic_ids": [entity_id],
+        "period": "hour",
+        "types": ["sum", "mean", "min", "max"],
+    }
+
+    if start_time:
+        service_data["start_time"] = start_time
+    if end_time:
+        service_data["end_time"] = end_time
+
+    return service_data
+
+
+def _extract_statistics_from_response(
+    response: dict, entity_id: str
+) -> list[dict] | None:
+    """Extract statistics data from recorder service response."""
+    if (
+        response
+        and isinstance(response, dict)
+        and "statistics" in response
+        and isinstance(response["statistics"], dict)
+        and entity_id in response["statistics"]
+    ):
+        result = response["statistics"][entity_id]
+        if isinstance(result, list):
+            return [stat for stat in result if isinstance(stat, dict)]
+    return None
+
+
+def _get_recent_statistics(filtered_result: list[dict], hours: int = 72) -> list[dict]:
+    """Filter statistics to recent timeframe."""
+    from datetime import datetime, timedelta, timezone
+
+    now = datetime.now(timezone.utc)
+    cutoff_time = now - timedelta(hours=hours)
+
+    recent_stats = []
+    for stat in filtered_result:
+        if "start" in stat and isinstance(stat["start"], str):
+            try:
+                stat_time = datetime.fromisoformat(stat["start"].replace("Z", "+00:00"))
+                if stat_time >= cutoff_time:
+                    recent_stats.append(stat)
+            except (ValueError, AttributeError):
+                pass
+
+    return recent_stats
+
+
+def _group_statistics_by_date(recent_stats: list[dict]) -> dict:
+    """Group statistics by date for analysis."""
+    from collections import defaultdict
+    from datetime import datetime
+
+    stats_by_date = defaultdict(list)
+
+    for stat in recent_stats:
+        if (
+            isinstance(stat, dict)
+            and "start" in stat
+            and isinstance(stat["start"], str)
+        ):
+            try:
+                stat_time = datetime.fromisoformat(stat["start"].replace("Z", "+00:00"))
+                date_str = stat_time.date().isoformat()
+                stats_by_date[date_str].append(
+                    {
+                        "time": stat_time.strftime("%H:%M"),
+                        "sum": stat.get("sum"),
+                        "mean": stat.get("mean"),
+                        "timestamp": stat["start"],
+                    }
+                )
+            except (ValueError, AttributeError):
+                continue
+
+    return stats_by_date
+
+
 async def _extract_teslemetry_statistics(
     hass: HomeAssistant,
     entity_id: str,
@@ -775,16 +1106,7 @@ async def _extract_teslemetry_statistics(
 ) -> list[dict]:
     """Extract statistics from a Teslemetry entity using recorder.get_statistics."""
     try:
-        service_data = {
-            "statistic_ids": [entity_id],
-            "period": "hour",
-            "types": ["sum", "mean", "min", "max"],
-        }
-
-        if start_time:
-            service_data["start_time"] = start_time
-        if end_time:
-            service_data["end_time"] = end_time
+        service_data = _get_statistics_service_data(start_time, end_time, entity_id)
 
         # Call recorder.get_statistics service
         response = await hass.services.async_call(
@@ -798,18 +1120,32 @@ async def _extract_teslemetry_statistics(
         _LOGGER.debug("Statistics API response for %s: %s", entity_id, response)
 
         # Extract statistics data
-        if (
-            response
-            and isinstance(response, dict)
-            and "statistics" in response
-            and isinstance(response["statistics"], dict)
-            and entity_id in response["statistics"]
-        ):
-            result = response["statistics"][entity_id]
-            if isinstance(result, list):
-                return [stat for stat in result if isinstance(stat, dict)]
+        filtered_result = (
+            _extract_statistics_from_response(response, entity_id) if response else None
+        )
+        if not filtered_result:
             return []
-        return []
+
+        # Analyze patterns in recent data
+        recent_stats = _get_recent_statistics(filtered_result)
+
+        if recent_stats:
+            _LOGGER.debug(
+                "=== RECENT TESLEMETRY DATA ANALYSIS (last 72 hours) for %s ===",
+                entity_id,
+            )
+            _LOGGER.debug("Found %d recent statistics entries", len(recent_stats))
+
+            # Group by day and analyze patterns
+            stats_by_date = _group_statistics_by_date(recent_stats)
+
+            # Log daily patterns
+            for date_str, day_stats in sorted(stats_by_date.items()):
+                _analyze_daily_statistics(day_stats, date_str)
+
+            _LOGGER.debug("=== END RECENT DATA ANALYSIS ===")
+
+        return filtered_result
 
     except Exception as e:
         _LOGGER.error("Failed to extract statistics for %s: %s", entity_id, e)
@@ -857,113 +1193,12 @@ async def _check_existing_statistics(
         return False
 
 
-def _convert_hourly_to_daily_statistics(hourly_stats: list[dict]) -> list[dict]:
-    """Convert hourly statistics to daily statistics by grouping by date.
-    
-    Handles two cases:
-    1. True hourly data: Different values per hour, sum them by date
-    2. Duplicate daily data: Same value repeated 24 times per day, use first occurrence
-    """
-    if not hourly_stats:
-        return []
-
-    from collections import defaultdict
-    from datetime import datetime
-
-    # Group stats by date first to detect duplicates
-    stats_by_date: dict[str, list[dict]] = defaultdict(list)
-    
-    for stat in hourly_stats:
-        if "start" not in stat:
-            continue
-
-        # Parse the timestamp and get the date
-        start_time = stat["start"]
-        if isinstance(start_time, str):
-            try:
-                dt = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
-            except ValueError:
-                _LOGGER.warning("Could not parse timestamp: %s", start_time)
-                continue
-        else:
-            dt = start_time
-
-        date_str = dt.date().isoformat()
-        stats_by_date[date_str].append(stat)
-
-    result = []
-    for date_str, day_stats in sorted(stats_by_date.items()):
-        if not day_stats:
-            continue
-            
-        # Check if all sum values are identical (duplicate daily totals)
-        sum_values = [s.get("sum", 0) for s in day_stats if "sum" in s]
-        if sum_values and len(set(sum_values)) == 1:
-            # All identical - this is duplicate daily data, use first occurrence
-            first_stat = day_stats[0]
-            _LOGGER.debug(
-                "Detected duplicate daily totals for %s (%d identical values of %.1f kWh), using first occurrence",
-                date_str, len(sum_values), sum_values[0]
-            )
-            result.append({
-                "start": datetime.fromisoformat(f"{date_str}T00:00:00+00:00"),
-                **{k: v for k, v in first_stat.items() if k != "start"}
-            })
-        else:
-            # Different values - true hourly data, aggregate by summing
-            daily_stat = {"sum": 0.0, "mean": 0.0, "min": float("inf"), "max": 0.0, "count": 0.0}
-            
-            for stat in day_stats:
-                if "sum" in stat and stat["sum"] is not None:
-                    daily_stat["sum"] += stat["sum"]
-                if "mean" in stat and stat["mean"] is not None:
-                    daily_stat["mean"] += stat["mean"]
-                    daily_stat["count"] += 1
-                if "min" in stat and stat["min"] is not None:
-                    daily_stat["min"] = min(daily_stat["min"], stat["min"])
-                if "max" in stat and stat["max"] is not None:
-                    daily_stat["max"] = max(daily_stat["max"], stat["max"])
-
-            final_stat: dict[str, Any] = {"start": datetime.fromisoformat(f"{date_str}T00:00:00+00:00")}
-            
-            if daily_stat["sum"] > 0:
-                final_stat["sum"] = daily_stat["sum"]
-            if daily_stat["count"] > 0:
-                final_stat["mean"] = daily_stat["mean"] / daily_stat["count"]
-            if daily_stat["min"] != float("inf"):
-                final_stat["min"] = daily_stat["min"]
-            if daily_stat["max"] > 0:
-                final_stat["max"] = daily_stat["max"]
-                
-            _LOGGER.debug(
-                "Aggregated true hourly data for %s: %d entries summed to %.1f kWh",
-                date_str, len(day_stats), final_stat.get("sum", 0)
-            )
-            result.append(final_stat)
-
-    _LOGGER.debug(
-        "Converted %d hourly statistics to %d daily statistics",
-        len(hourly_stats),
-        len(result),
-    )
-    return result
-
-
 async def _import_statistics_via_spook(
     hass: HomeAssistant, entity_id: str, entity_entry, statistics_data: list
 ):
     """Import statistics data using Spook's recorder.import_statistics service."""
     if not statistics_data:
         return
-
-    # Convert hourly statistics to daily statistics for daily sensors
-    if "_daily" in entity_id:
-        statistics_data = _convert_hourly_to_daily_statistics(statistics_data)
-        if not statistics_data:
-            _LOGGER.warning(
-                "No daily statistics generated from hourly data for %s", entity_id
-            )
-            return
 
     # Convert statistics format for Spook import
     spook_stats = []
