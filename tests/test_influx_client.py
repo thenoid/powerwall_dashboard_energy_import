@@ -112,7 +112,7 @@ def test_get_hourly_kwh(monkeypatch):
     # Check query format
     expected_query = (
         "SELECT integral(solar)/1000/3600 AS value FROM autogen.http "
-        "WHERE time >= '2025-08-22T00:00:00Z' AND time < '2025-08-23T00:00:00Z' AND solar > 0 "
+        "WHERE time >= '2025-08-22T00:00:00Z' AND time <= '2025-08-22T23:59:59Z' AND solar > 0 "
         "GROUP BY time(1h) fill(0)"
     )
     assert ic._client.queries[-1] == expected_query

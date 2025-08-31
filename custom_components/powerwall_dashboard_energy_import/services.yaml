@@ -29,6 +29,12 @@ backfill:
       example: "My Powerwall"
       selector:
         text:
+    overwrite_existing:
+      name: Overwrite existing statistics
+      description: "Replace existing statistics in the date range. WARNING: This will permanently delete existing data."
+      default: false
+      selector:
+        boolean:
 
 migrate_from_teslemetry:
   name: Migrate from Teslemetry
