@@ -1301,12 +1301,12 @@ async def test_date_parsing_edge_cases():
 @pytest.mark.asyncio
 async def test_backfill_current_day_limiting():
     """Test that backfill limits current day processing to prevent blocking live data."""
+    from datetime import datetime
+    from unittest.mock import AsyncMock, MagicMock, patch
+
     from custom_components.powerwall_dashboard_energy_import import (
         async_handle_backfill,
     )
-    from datetime import datetime, date
-    import zoneinfo
-    from unittest.mock import AsyncMock, MagicMock, patch
 
     # Create mock objects
     mock_hass = AsyncMock()
@@ -1372,10 +1372,10 @@ async def test_backfill_past_day_processing():
     """Test that backfill processes past days normally."""
     # Simple test to verify past day logic doesn't crash
     from datetime import datetime, timedelta
-    
+
     # Test the date comparison logic
     today = datetime.now().date()
     yesterday = (datetime.now() - timedelta(days=1)).date()
-    
+
     assert today != yesterday  # Basic sanity check
     assert True
