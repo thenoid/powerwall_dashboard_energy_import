@@ -242,10 +242,6 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             try:
                 from datetime import timedelta
 
-                from homeassistant.components.recorder.statistics import (
-                    statistics_during_period,
-                )
-
                 # Get statistics from just before the start date
                 # We want the cumulative value at the end of the day BEFORE start_date
                 end_of_previous_day = datetime.combine(
@@ -256,22 +252,28 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 # Query statistics up to end of previous day
                 from typing import Any, cast
 
+                from homeassistant.components.recorder.statistics import (
+                    get_last_statistics,
+                )
+
+                # Get the LAST statistic before our start date to get final cumulative value
+                # This gets the most recent statistic regardless of when it was
                 previous_stats = await hass.async_add_executor_job(
-                    cast(Any, statistics_during_period),
+                    cast(Any, get_last_statistics),
                     hass,
-                    end_of_previous_day - timedelta(hours=1),  # Start 1 hour before
-                    end_of_previous_day,  # End at previous day
-                    {entity_id},
-                    "hour",
-                    None,  # units
+                    1,  # Get 1 most recent statistic
+                    entity_id,
+                    True,  # Convert units
                     {"sum"},  # Only need sum
                 )
 
                 if previous_stats and entity_id in previous_stats:
                     entity_stats = previous_stats[entity_id]
                     if entity_stats and len(entity_stats) > 0:
-                        # Get the last (most recent) statistic before our start date
-                        last_stat = entity_stats[-1]
+                        # Get the most recent statistic entry (get_last_statistics returns list)
+                        last_stat = entity_stats[
+                            0
+                        ]  # get_last_statistics returns list with most recent first
                         if "sum" in last_stat:
                             cumulative_base = (
                                 float(last_stat["sum"])
@@ -279,9 +281,9 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                                 else 0.0
                             )
                             _LOGGER.info(
-                                "Captured pre-purge cumulative base: %.3f kWh from end of %s",
+                                "Captured pre-purge cumulative base: %.3f kWh from most recent statistic at %s",
                                 cumulative_base,
-                                (start_date - timedelta(days=1)).strftime("%Y-%m-%d"),
+                                last_stat.get("start", "unknown time"),
                             )
 
             except Exception as e:
@@ -404,16 +406,21 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 # Build cumulative statistics from actual hourly data
                 cumulative_progress = 0.0
 
-                # CRITICAL FIX: For current day, limit to current hour to prevent blocking live data
+                # CRITICAL FIX: For current day, limit to completed hours only to prevent blocking live data
                 max_hour = 24
                 if is_current_day:
                     current_hour = current_datetime.hour
-                    max_hour = current_hour  # Only backfill completed hours
+                    # Only backfill COMPLETED hours - current hour is still in progress
+                    # E.g., at 15:30, backfill hours 0-14 (15 hours), current hour 15 is still running
+                    max_hour = (
+                        current_hour  # range(current_hour) gives 0 to current_hour-1
+                    )
                     _LOGGER.warning(
-                        "Current day %s: limiting backfill to hour %d (current time: %s) to prevent blocking live data",
+                        "Current day %s: limiting backfill to completed hours 0-%d (current time: %s, current hour %d still in progress)",
                         current_date,
                         max_hour - 1 if max_hour > 0 else 0,
                         current_datetime.strftime("%H:%M"),
+                        current_hour,
                     )
 
                 for hour in range(max_hour):
