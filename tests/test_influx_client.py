@@ -176,9 +176,11 @@ class FirstTimestampClient:
         if self.raise_exception:
             raise Exception("Database error")
         if self.return_data:
+
             class R:
                 def get_points(self):
                     return [{"time": "2025-01-01T00:00:00Z", "first": 100}]
+
             return R()
         return None
 
@@ -206,6 +208,7 @@ class DailyKwhClient:
         class R:
             def get_points(self):
                 return [{"value": return_value}] if return_value is not None else []
+
         return R()
 
     def close(self):
@@ -218,17 +221,23 @@ def test_connection_failures(monkeypatch):
 
     # Test ConnectionError
     ic = InfluxClient("localhost", 8086, "user", "pass", "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FailingClient("connection"))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FailingClient("connection")
+    )
     assert ic.connect() is False
 
     # Test InfluxDBClientError
     ic = InfluxClient("localhost", 8086, "user", "pass", "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FailingClient("influx_client"))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FailingClient("influx_client")
+    )
     assert ic.connect() is False
 
     # Test InfluxDBServerError
     ic = InfluxClient("localhost", 8086, "user", "pass", "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FailingClient("influx_server"))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FailingClient("influx_server")
+    )
     assert ic.connect() is False
 
 
@@ -245,7 +254,9 @@ def test_query_exception_handling(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FailingClient("query_exception"))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FailingClient("query_exception")
+    )
 
     assert ic.connect() is True
     result = ic.query("SELECT 1")
@@ -257,7 +268,9 @@ def test_get_first_timestamp_success(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FirstTimestampClient(return_data=True))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FirstTimestampClient(return_data=True)
+    )
 
     assert ic.connect() is True
     result = ic.get_first_timestamp("test_series")
@@ -273,7 +286,9 @@ def test_get_first_timestamp_no_result(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FirstTimestampClient(return_data=False))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: FirstTimestampClient(return_data=False)
+    )
 
     assert ic.connect() is True
     result = ic.get_first_timestamp("test_series")
@@ -285,7 +300,11 @@ def test_get_first_timestamp_exception(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: FirstTimestampClient(raise_exception=True))
+    monkeypatch.setattr(
+        mod,
+        "InfluxDBClient",
+        lambda **kwargs: FirstTimestampClient(raise_exception=True),
+    )
 
     assert ic.connect() is True
     result = ic.get_first_timestamp("test_series")
@@ -307,6 +326,7 @@ def test_get_first_timestamp_processing_exception():
 
     # Patch the query method to return our problematic result
     original_query = ic.query
+
     def mock_query(q):
         return BadResult()  # This will be truthy but fail on result[0] access
 
@@ -356,7 +376,9 @@ def test_get_daily_kwh_rounding(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: DailyKwhClient(1.23456789))
+    monkeypatch.setattr(
+        mod, "InfluxDBClient", lambda **kwargs: DailyKwhClient(1.23456789)
+    )
 
     assert ic.connect() is True
     result = ic.get_daily_kwh("solar", date(2025, 8, 22), "test_series")
@@ -383,7 +405,10 @@ class TimezoneHourlyClient:
                 if return_mixed_dates:
                     # Return data that spans multiple dates when converted to local time
                     return [
-                        {"time": "2025-08-22T06:00:00Z", "value": 1.0},  # This might be different date in local time
+                        {
+                            "time": "2025-08-22T06:00:00Z",
+                            "value": 1.0,
+                        },  # This might be different date in local time
                         {"time": "2025-08-22T12:00:00Z", "value": 5.0},
                         {"time": "2025-08-23T02:00:00Z", "value": 2.0},  # Different day
                     ]
@@ -394,6 +419,7 @@ class TimezoneHourlyClient:
                         {"time": "2025-08-22T12:00:00Z", "value": 5.0},
                         {"time": "2025-08-22T18:00:00Z", "value": 3.0},
                     ]
+
         return R()
 
     def close(self):
@@ -411,7 +437,9 @@ def test_get_hourly_kwh_with_timezone(monkeypatch):
 
     # Test with non-UTC timezone
     test_date = date(2025, 8, 22)
-    hourly_values = ic.get_hourly_kwh("solar", test_date, "test_series", "America/New_York")
+    hourly_values = ic.get_hourly_kwh(
+        "solar", test_date, "test_series", "America/New_York"
+    )
 
     # Should return 24 values
     assert len(hourly_values) == 24
@@ -428,13 +456,19 @@ def test_get_hourly_kwh_timezone_date_filtering(monkeypatch):
     import custom_components.powerwall_dashboard_energy_import.influx_client as mod
 
     ic = InfluxClient("localhost", 8086, None, None, "powerwall")
-    monkeypatch.setattr(mod, "InfluxDBClient", lambda **kwargs: TimezoneHourlyClient(return_mixed_dates=True))
+    monkeypatch.setattr(
+        mod,
+        "InfluxDBClient",
+        lambda **kwargs: TimezoneHourlyClient(return_mixed_dates=True),
+    )
 
     assert ic.connect() is True
 
     # Test with timezone that might cause date changes
     test_date = date(2025, 8, 22)
-    hourly_values = ic.get_hourly_kwh("solar", test_date, "test_series", "America/New_York")
+    hourly_values = ic.get_hourly_kwh(
+        "solar", test_date, "test_series", "America/New_York"
+    )
 
     # Should return 24 values
     assert len(hourly_values) == 24
@@ -459,6 +493,7 @@ def test_get_hourly_kwh_utc_direct_parsing():
                         {"time": "2025-08-22T14:45:00Z", "value": 6.2},
                         {"time": "2025-08-22T23:15:00Z", "value": 0.1},
                     ]
+
             return R()
 
         def close(self):
@@ -474,7 +509,7 @@ def test_get_hourly_kwh_utc_direct_parsing():
     assert len(hourly_values) == 24
 
     # Verify UTC parsing worked correctly
-    assert hourly_values[6] == 1.5   # 6 AM
+    assert hourly_values[6] == 1.5  # 6 AM
     assert hourly_values[14] == 6.2  # 2 PM
     assert hourly_values[23] == 0.1  # 11 PM
 
@@ -491,10 +526,20 @@ def test_get_hourly_kwh_hour_bounds():
             class R:
                 def get_points(self):
                     return [
-                        {"time": "2025-08-22T00:00:00Z", "value": 1.0},  # Hour 0 - edge case
-                        {"time": "2025-08-22T12:00:00Z", "value": 5.0},  # Hour 12 - normal
-                        {"time": "2025-08-22T23:00:00Z", "value": 3.0},  # Hour 23 - edge case
+                        {
+                            "time": "2025-08-22T00:00:00Z",
+                            "value": 1.0,
+                        },  # Hour 0 - edge case
+                        {
+                            "time": "2025-08-22T12:00:00Z",
+                            "value": 5.0,
+                        },  # Hour 12 - normal
+                        {
+                            "time": "2025-08-22T23:00:00Z",
+                            "value": 3.0,
+                        },  # Hour 23 - edge case
                     ]
+
             return R()
 
         def close(self):
@@ -510,7 +555,7 @@ def test_get_hourly_kwh_hour_bounds():
     assert len(hourly_values) == 24
 
     # Test boundary hours
-    assert hourly_values[0] == 1.0   # Hour 0
+    assert hourly_values[0] == 1.0  # Hour 0
     assert hourly_values[12] == 5.0  # Hour 12
     assert hourly_values[23] == 3.0  # Hour 23
 

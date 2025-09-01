@@ -111,10 +111,7 @@ class TestAsyncSetupEntry:
 
         # Mock client and store
         mock_client = MockInfluxClient()
-        store = {
-            "client": mock_client,
-            "pw_name": "Test Powerwall"
-        }
+        store = {"client": mock_client, "pw_name": "Test Powerwall"}
         hass.data = {DOMAIN: {"test_entry_id": store}}
 
         # Call async_setup_entry
@@ -179,7 +176,7 @@ class TestPowerwallDashboardSensor:
             device_name="Test Device",
             field=field,
             mode=mode,
-            **defaults
+            **defaults,
         )
 
     def test_sensor_initialization(self):
@@ -1003,7 +1000,9 @@ class TestSensorDefinitions:
 
         for definition in SENSOR_DEFINITIONS:
             assert len(definition) == 8
-            sensor_id, name, field, mode, unit, icon, device_class, state_class = definition
+            sensor_id, name, field, mode, unit, icon, device_class, state_class = (
+                definition
+            )
             assert isinstance(sensor_id, str)
             assert isinstance(name, str)
             assert isinstance(field, str)

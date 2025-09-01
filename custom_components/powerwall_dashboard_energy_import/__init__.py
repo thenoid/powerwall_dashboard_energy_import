@@ -363,6 +363,12 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 cumulative_base,
             )
 
+            # CRITICAL FIX: For current day, only backfill up to current hour
+            # This prevents writing future hour statistics that block live data
+            today = datetime.now(tz).date()
+            current_datetime = datetime.now(tz)
+            is_current_day = current_date == today
+
             # Get realistic hourly energy data instead of artificially splitting daily total
             hourly_values = await hass.async_add_executor_job(
                 client.get_hourly_kwh,
@@ -397,7 +403,20 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
                 # Build cumulative statistics from actual hourly data
                 cumulative_progress = 0.0
-                for hour in range(24):
+
+                # CRITICAL FIX: For current day, limit to current hour to prevent blocking live data
+                max_hour = 24
+                if is_current_day:
+                    current_hour = current_datetime.hour
+                    max_hour = current_hour  # Only backfill completed hours
+                    _LOGGER.warning(
+                        "Current day %s: limiting backfill to hour %d (current time: %s) to prevent blocking live data",
+                        current_date,
+                        max_hour - 1 if max_hour > 0 else 0,
+                        current_datetime.strftime("%H:%M"),
+                    )
+
+                for hour in range(max_hour):
                     hourly_energy = hourly_values[hour]
                     cumulative_progress += hourly_energy
 
