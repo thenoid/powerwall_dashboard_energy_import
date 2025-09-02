@@ -501,6 +501,93 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             _LOGGER.info("Importing %d statistics for %s", len(stats), entity_id)
             _LOGGER.info("Sample stat: %s", stats[0] if stats else "None")
 
+            # BOUNDARY SYNCHRONIZATION FIX: Ensure final backfilled sum aligns with live sensor continuation
+            try:
+                from homeassistant.components.recorder.statistics import (
+                    get_last_statistics,
+                )
+
+                # Get the final backfilled statistic
+                final_backfilled_stat = stats[-1] if stats else None
+                if final_backfilled_stat:
+                    final_start = final_backfilled_stat["start"]
+                    if isinstance(final_start, datetime):
+                        _LOGGER.info(
+                            "BOUNDARY SYNC: Final backfilled sum is %.3f kWh at %s",
+                            final_backfilled_stat["sum"],
+                            final_start.isoformat(),
+                        )
+
+                        # Query what the next live statistic would be to detect potential discontinuity
+                        next_hour_start = final_start + timedelta(hours=1)
+
+                        # Check if there are any existing statistics after our backfill end
+                        future_stats = await hass.async_add_executor_job(
+                            cast(Any, get_last_statistics),
+                            hass,
+                            1,  # Get 1 most recent statistic
+                            entity_id,
+                            True,  # Convert units
+                            {"sum"},  # Only need sum
+                        )
+
+                        if future_stats and entity_id in future_stats:
+                            entity_stats = future_stats[entity_id]
+                            if entity_stats and len(entity_stats) > 0:
+                                next_stat = entity_stats[0]  # Most recent statistic
+                                if (
+                                    "sum" in next_stat
+                                    and next_stat["sum"] is not None
+                                    and "start" in next_stat
+                                ):
+                                    next_stat_start = next_stat["start"]
+                                    # Only consider stats after our backfill end
+                                    if isinstance(next_stat_start, str):
+                                        next_stat_time = datetime.fromisoformat(
+                                            next_stat_start
+                                        )
+                                    else:
+                                        next_stat_time = next_stat_start
+
+                                    if isinstance(next_stat_time, datetime) and next_stat_time >= next_hour_start:
+                                        potential_jump = (
+                                            final_backfilled_stat["sum"] - next_stat["sum"]
+                                        )
+                                        if abs(potential_jump) > 10.0:  # More than 10 kWh discontinuity
+                                            _LOGGER.warning(
+                                                "BOUNDARY SYNC: Detected potential %.3f kWh discontinuity between backfilled (%.3f) and live (%.3f) data",
+                                                potential_jump,
+                                                final_backfilled_stat["sum"],
+                                                next_stat["sum"],
+                                            )
+
+                                            # CRITICAL FIX: Adjust the final backfilled statistics to align with live data
+                                            target_final_sum = next_stat["sum"]
+                                            adjustment_needed = (
+                                                target_final_sum - final_backfilled_stat["sum"]
+                                            )
+
+                                            _LOGGER.warning(
+                                                "BOUNDARY SYNC: Applying adjustment of %.3f kWh to align backfilled data with live sensor continuation",
+                                                adjustment_needed,
+                                            )
+
+                                            # Apply adjustment to all backfilled statistics
+                                            for stat in stats:
+                                                stat["sum"] = stat["sum"] + adjustment_needed
+
+                                            _LOGGER.info(
+                                                "BOUNDARY SYNC: Adjusted final backfilled sum from %.3f to %.3f kWh for smooth handoff",
+                                                final_backfilled_stat["sum"] - adjustment_needed,
+                                                final_backfilled_stat["sum"],
+                                            )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    "BOUNDARY SYNC: Could not perform boundary synchronization check: %s",
+                    e,
+                )
+
             # Check if Spook's recorder.import_statistics service is available
             if not hass.services.has_service("recorder", "import_statistics"):
                 _LOGGER.error(
