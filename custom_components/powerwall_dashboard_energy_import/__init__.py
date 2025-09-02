@@ -29,12 +29,27 @@ PLATFORMS: list[str] = ["sensor"]
 _LOGGER = logging.getLogger(__name__)
 
 BACKFILL_FIELDS = {
+    # Daily sensors (existing - keep for backward compatibility)
     "home_usage_daily": "home",
     "solar_generated_daily": "solar",
     "grid_imported_daily": "from_grid",
     "grid_exported_daily": "to_grid",
     "battery_discharged_daily": "from_pw",
     "battery_charged_daily": "to_pw",
+    # Main sensors (newly added)
+    "home_usage": "home",
+    "solar_generated": "solar",
+    "grid_imported": "from_grid",
+    "grid_exported": "to_grid",
+    "battery_discharged": "from_pw",
+    "battery_charged": "to_pw",
+    # Monthly sensors (newly added)
+    "home_usage_monthly": "home",
+    "solar_generated_monthly": "solar",
+    "grid_imported_monthly": "from_grid",
+    "grid_exported_monthly": "to_grid",
+    "battery_discharged_monthly": "from_pw",
+    "battery_charged_monthly": "to_pw",
 }
 
 
@@ -813,32 +828,41 @@ def _get_teslemetry_patterns() -> tuple[list[str], dict[str, str]]:
     ]
 
     our_entity_patterns = {
-        # Home energy mappings
+        # Daily sensor mappings (existing - keep for backward compatibility)
         "home": "home_usage_daily",
         "home_energy": "home_usage_daily",
         "home_consumption": "home_usage_daily",
         "home_usage": "home_usage_daily",
         "load": "home_usage_daily",
-        # Solar energy mappings
         "solar": "solar_generated_daily",
         "solar_energy": "solar_generated_daily",
         "solar_production": "solar_generated_daily",
         "solar_generated": "solar_generated_daily",
         "pv": "solar_generated_daily",
-        # Battery charge mappings
         "battery_charge": "battery_charged_daily",
         "battery_energy_in": "battery_charged_daily",
-        # Battery discharge mappings
         "battery_discharge": "battery_discharged_daily",
         "battery_energy_out": "battery_discharged_daily",
         "powerwall": "battery_discharged_daily",
-        # Grid import mappings
         "grid_import": "grid_imported_daily",
         "grid_energy_in": "grid_imported_daily",
         "utility": "grid_imported_daily",
-        # Grid export mappings
         "grid_export": "grid_exported_daily",
         "grid_energy_out": "grid_exported_daily",
+        # Main sensor mappings (newly added)
+        "home_main": "home_usage",
+        "solar_main": "solar_generated",
+        "battery_charge_main": "battery_charged",
+        "battery_discharge_main": "battery_discharged",
+        "grid_import_main": "grid_imported",
+        "grid_export_main": "grid_exported",
+        # Monthly sensor mappings (newly added)
+        "home_monthly": "home_usage_monthly",
+        "solar_monthly": "solar_generated_monthly",
+        "battery_charge_monthly": "battery_charged_monthly",
+        "battery_discharge_monthly": "battery_discharged_monthly",
+        "grid_import_monthly": "grid_imported_monthly",
+        "grid_export_monthly": "grid_exported_monthly",
     }
 
     return teslemetry_patterns, our_entity_patterns
