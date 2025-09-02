@@ -5,14 +5,12 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
-
-_LOGGER = logging.getLogger(__name__)
-
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers.entity_registry import EntityRegistry, RegistryEntry
 
 from custom_components.powerwall_dashboard_energy_import import (
+    BACKFILL_FIELDS,
     DOMAIN,
     PLATFORMS,
     _analyze_daily_statistics,
@@ -46,6 +44,8 @@ from custom_components.powerwall_dashboard_energy_import.const import (
     CONF_USERNAME,
     DEFAULT_PW_NAME,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @pytest.fixture
@@ -927,7 +927,7 @@ async def test_backfill_sensor_prefix_match_and_nomatch():
 
     try:
         await async_handle_backfill(call)  # Should find match and proceed
-    except:
+    except Exception:
         pass  # Expected to fail due to minimal mocking
 
     assert True  # Both code paths hit
@@ -1293,7 +1293,7 @@ async def test_date_parsing_edge_cases():
         call.data = data
         try:
             await async_handle_backfill(call)
-        except:
+        except Exception:
             # Expected to fail due to missing entries, but we hit date parsing
             pass
 
@@ -1379,3 +1379,54 @@ async def test_backfill_past_day_processing():
 
     assert today != yesterday  # Basic sanity check
     assert True
+
+
+def test_backfill_fields_includes_main_sensors():
+    """Test that BACKFILL_FIELDS includes main sensors (currently failing)."""
+    # This test will initially fail - we need to add main sensors
+    expected_main_sensors = {
+        "home_usage": "home",
+        "solar_generated": "solar",
+        "grid_imported": "from_grid",
+        "grid_exported": "to_grid",
+        "battery_discharged": "from_pw",
+        "battery_charged": "to_pw",
+    }
+
+    for sensor_key, influx_field in expected_main_sensors.items():
+        assert sensor_key in BACKFILL_FIELDS, f"Main sensor {sensor_key} missing from BACKFILL_FIELDS"
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Main sensor {sensor_key} has wrong mapping"
+
+
+def test_backfill_fields_includes_monthly_sensors():
+    """Test that BACKFILL_FIELDS includes monthly sensors (currently failing)."""
+    # This test will initially fail - we need to add monthly sensors
+    expected_monthly_sensors = {
+        "home_usage_monthly": "home",
+        "solar_generated_monthly": "solar",
+        "grid_imported_monthly": "from_grid",
+        "grid_exported_monthly": "to_grid",
+        "battery_discharged_monthly": "from_pw",
+        "battery_charged_monthly": "to_pw",
+    }
+
+    for sensor_key, influx_field in expected_monthly_sensors.items():
+        assert sensor_key in BACKFILL_FIELDS, f"Monthly sensor {sensor_key} missing from BACKFILL_FIELDS"
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Monthly sensor {sensor_key} has wrong mapping"
+
+
+def test_backfill_fields_preserves_daily_sensors():
+    """Test that BACKFILL_FIELDS still includes existing daily sensors."""
+    # These should continue to work
+    expected_daily_sensors = {
+        "home_usage_daily": "home",
+        "solar_generated_daily": "solar",
+        "grid_imported_daily": "from_grid",
+        "grid_exported_daily": "to_grid",
+        "battery_discharged_daily": "from_pw",
+        "battery_charged_daily": "to_pw",
+    }
+
+    for sensor_key, influx_field in expected_daily_sensors.items():
+        assert sensor_key in BACKFILL_FIELDS, f"Daily sensor {sensor_key} missing from BACKFILL_FIELDS"
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Daily sensor {sensor_key} has wrong mapping"

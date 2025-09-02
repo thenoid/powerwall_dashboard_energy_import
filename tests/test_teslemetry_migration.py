@@ -9,6 +9,7 @@ from custom_components.powerwall_dashboard_energy_import import (
     _check_existing_statistics,
     _discover_teslemetry_entities,
     _extract_teslemetry_statistics,
+    _get_teslemetry_patterns,
     _import_statistics_via_spook,
     async_handle_teslemetry_migration,
 )
@@ -597,3 +598,62 @@ async def test_sensor_prefix_matching_edge_cases(mock_hass, mock_entity_registry
         assert len(mapping) == 1
         assert "sensor.my_home_solar_energy" in mapping
         assert mapping["sensor.my_home_solar_energy"] == expected_entity_id
+
+
+def test_teslemetry_patterns_include_main_sensors():
+    """Test that Teslemetry patterns include main sensor mappings (currently failing)."""
+    # This test will initially fail - we need to add main sensor mappings
+    _, our_entity_patterns = _get_teslemetry_patterns()
+
+    # Check specific keys have main sensor alternatives
+    expected_main_entries = [
+        ("home_main", "home_usage"),
+        ("solar_main", "solar_generated"),
+        ("battery_charge_main", "battery_charged"),
+        ("battery_discharge_main", "battery_discharged"),
+        ("grid_import_main", "grid_imported"),
+        ("grid_export_main", "grid_exported"),
+    ]
+
+    for pattern, expected_main in expected_main_entries:
+        assert pattern in our_entity_patterns, f"Main pattern {pattern} missing from our_entity_patterns"
+        assert our_entity_patterns[pattern] == expected_main, f"Main pattern {pattern} should map to {expected_main}"
+
+
+def test_teslemetry_patterns_include_monthly_sensors():
+    """Test that Teslemetry patterns include monthly sensor mappings (currently failing)."""
+    # This test will initially fail - we need to add monthly sensor mappings
+    _, our_entity_patterns = _get_teslemetry_patterns()
+
+    # Check specific keys have monthly sensor alternatives
+    expected_monthly_entries = [
+        ("home_monthly", "home_usage_monthly"),
+        ("solar_monthly", "solar_generated_monthly"),
+        ("battery_charge_monthly", "battery_charged_monthly"),
+        ("battery_discharge_monthly", "battery_discharged_monthly"),
+        ("grid_import_monthly", "grid_imported_monthly"),
+        ("grid_export_monthly", "grid_exported_monthly"),
+    ]
+
+    for pattern, expected_monthly in expected_monthly_entries:
+        assert pattern in our_entity_patterns, f"Monthly pattern {pattern} missing from our_entity_patterns"
+        assert our_entity_patterns[pattern] == expected_monthly, f"Monthly pattern {pattern} should map to {expected_monthly}"
+
+
+def test_teslemetry_patterns_preserve_daily_sensors():
+    """Test that Teslemetry patterns still include existing daily sensor mappings."""
+    # These should continue to work
+    _, our_entity_patterns = _get_teslemetry_patterns()
+
+    expected_daily_mappings = {
+        "home": "home_usage_daily",
+        "solar": "solar_generated_daily",
+        "battery_charge": "battery_charged_daily",
+        "battery_discharge": "battery_discharged_daily",
+        "grid_import": "grid_imported_daily",
+        "grid_export": "grid_exported_daily",
+    }
+
+    for pattern, expected_daily in expected_daily_mappings.items():
+        assert pattern in our_entity_patterns, f"Pattern {pattern} missing from our_entity_patterns"
+        assert expected_daily in our_entity_patterns.values(), f"Daily sensor {expected_daily} not in mappings"
