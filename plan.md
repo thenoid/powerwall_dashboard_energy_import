@@ -85,8 +85,8 @@ This will provide complete historical data coverage across all sensor types for 
 - [ ] **Target: Maintain >90% code coverage**
 
 ### 4. Implementation
-- [ ] Implement minimal code to make tests pass (green)
-- [ ] Ensure all sensor types are processed by backfill service
+- [x] Implement minimal code to make tests pass (green)
+- [x] Ensure all sensor types are processed by backfill service
 
 ### 5. Full CI Validation Suite (Mandatory per CLAUDE.md)
 - [x] **pytest with coverage**: `python -m pytest tests/ -v --cov=custom_components --cov-report=term-missing`
@@ -98,8 +98,8 @@ This will provide complete historical data coverage across all sensor types for 
 - [x] **Fix any issues** discovered by the validation suite
 
 ### 6. Version Management
-- [ ] Update version number following SEMVER
-- [ ] Update manifest.json
+- [x] Update version number following SEMVER
+- [x] Update manifest.json
 
 ### 7. Real Data Validation
 - [ ] Test with real data to ensure all three sensor types are processed

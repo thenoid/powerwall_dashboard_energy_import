@@ -245,7 +245,21 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
         # Handle overwrite logic BEFORE calculating statistics
         cumulative_base = 0.0
-        if overwrite_existing:
+
+        # Determine if we should overwrite based on whether any date in range is current day
+        today = datetime.now(tz).date()
+        has_current_day = start_date <= today <= end_date
+        should_overwrite = overwrite_existing and not has_current_day
+
+        if has_current_day and overwrite_existing:
+            _LOGGER.warning(
+                "Current day %s is in range %s to %s with overwrite_existing=true. Switching to append mode to preserve live sensor data.",
+                today.isoformat(),
+                start_date.isoformat(),
+                end_date.isoformat(),
+            )
+
+        if should_overwrite:
             _LOGGER.warning(
                 "Overwrite enabled - clearing existing statistics for %s from %s to %s",
                 entity_id,
@@ -371,7 +385,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 )
                 cumulative_base = 0.0
 
-        current_date = start_date
+        current_date: date = start_date
         while current_date <= end_date:
             _LOGGER.warning("=== PROCESSING DAY %s ===", current_date)
             _LOGGER.warning(
@@ -382,7 +396,6 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
 
             # CRITICAL FIX: For current day, only backfill up to current hour
             # This prevents writing future hour statistics that block live data
-            today = datetime.now(tz).date()
             current_datetime = datetime.now(tz)
             is_current_day = current_date == today
 

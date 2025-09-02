@@ -616,8 +616,12 @@ def test_teslemetry_patterns_include_main_sensors():
     ]
 
     for pattern, expected_main in expected_main_entries:
-        assert pattern in our_entity_patterns, f"Main pattern {pattern} missing from our_entity_patterns"
-        assert our_entity_patterns[pattern] == expected_main, f"Main pattern {pattern} should map to {expected_main}"
+        assert pattern in our_entity_patterns, (
+            f"Main pattern {pattern} missing from our_entity_patterns"
+        )
+        assert our_entity_patterns[pattern] == expected_main, (
+            f"Main pattern {pattern} should map to {expected_main}"
+        )
 
 
 def test_teslemetry_patterns_include_monthly_sensors():
@@ -636,8 +640,12 @@ def test_teslemetry_patterns_include_monthly_sensors():
     ]
 
     for pattern, expected_monthly in expected_monthly_entries:
-        assert pattern in our_entity_patterns, f"Monthly pattern {pattern} missing from our_entity_patterns"
-        assert our_entity_patterns[pattern] == expected_monthly, f"Monthly pattern {pattern} should map to {expected_monthly}"
+        assert pattern in our_entity_patterns, (
+            f"Monthly pattern {pattern} missing from our_entity_patterns"
+        )
+        assert our_entity_patterns[pattern] == expected_monthly, (
+            f"Monthly pattern {pattern} should map to {expected_monthly}"
+        )
 
 
 def test_teslemetry_patterns_preserve_daily_sensors():
@@ -655,5 +663,9 @@ def test_teslemetry_patterns_preserve_daily_sensors():
     }
 
     for pattern, expected_daily in expected_daily_mappings.items():
-        assert pattern in our_entity_patterns, f"Pattern {pattern} missing from our_entity_patterns"
-        assert expected_daily in our_entity_patterns.values(), f"Daily sensor {expected_daily} not in mappings"
+        assert pattern in our_entity_patterns, (
+            f"Pattern {pattern} missing from our_entity_patterns"
+        )
+        assert expected_daily in our_entity_patterns.values(), (
+            f"Daily sensor {expected_daily} not in mappings"
+        )
