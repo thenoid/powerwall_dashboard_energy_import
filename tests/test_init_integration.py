@@ -1394,8 +1394,12 @@ def test_backfill_fields_includes_main_sensors():
     }
 
     for sensor_key, influx_field in expected_main_sensors.items():
-        assert sensor_key in BACKFILL_FIELDS, f"Main sensor {sensor_key} missing from BACKFILL_FIELDS"
-        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Main sensor {sensor_key} has wrong mapping"
+        assert sensor_key in BACKFILL_FIELDS, (
+            f"Main sensor {sensor_key} missing from BACKFILL_FIELDS"
+        )
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, (
+            f"Main sensor {sensor_key} has wrong mapping"
+        )
 
 
 def test_backfill_fields_includes_monthly_sensors():
@@ -1411,8 +1415,12 @@ def test_backfill_fields_includes_monthly_sensors():
     }
 
     for sensor_key, influx_field in expected_monthly_sensors.items():
-        assert sensor_key in BACKFILL_FIELDS, f"Monthly sensor {sensor_key} missing from BACKFILL_FIELDS"
-        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Monthly sensor {sensor_key} has wrong mapping"
+        assert sensor_key in BACKFILL_FIELDS, (
+            f"Monthly sensor {sensor_key} missing from BACKFILL_FIELDS"
+        )
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, (
+            f"Monthly sensor {sensor_key} has wrong mapping"
+        )
 
 
 def test_backfill_fields_preserves_daily_sensors():
@@ -1428,5 +1436,9 @@ def test_backfill_fields_preserves_daily_sensors():
     }
 
     for sensor_key, influx_field in expected_daily_sensors.items():
-        assert sensor_key in BACKFILL_FIELDS, f"Daily sensor {sensor_key} missing from BACKFILL_FIELDS"
-        assert BACKFILL_FIELDS[sensor_key] == influx_field, f"Daily sensor {sensor_key} has wrong mapping"
+        assert sensor_key in BACKFILL_FIELDS, (
+            f"Daily sensor {sensor_key} missing from BACKFILL_FIELDS"
+        )
+        assert BACKFILL_FIELDS[sensor_key] == influx_field, (
+            f"Daily sensor {sensor_key} has wrong mapping"
+        )
