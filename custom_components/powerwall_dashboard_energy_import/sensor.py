@@ -272,10 +272,14 @@ class PowerwallDashboardSensor(SensorEntity):
                 last_stat = last_stats[entity_id][0]
                 if "sum" in last_stat and last_stat["sum"] is not None:
                     baseline = float(last_stat["sum"])
-                    _LOGGER.debug("Found existing baseline for %s: %.3f kWh", entity_id, baseline)
+                    _LOGGER.debug(
+                        "Found existing baseline for %s: %.3f kWh", entity_id, baseline
+                    )
                     return baseline
 
-            _LOGGER.debug("No existing baseline found for %s, starting from 0.0", entity_id)
+            _LOGGER.debug(
+                "No existing baseline found for %s, starting from 0.0", entity_id
+            )
             return 0.0
 
         except Exception as e:
@@ -388,8 +392,13 @@ class PowerwallDashboardSensor(SensorEntity):
             if self._attr_state_class == SensorStateClass.TOTAL_INCREASING:
                 existing_baseline = self._get_existing_baseline()
                 self._attr_sum = existing_baseline + current_value
-                _LOGGER.debug("Sensor %s: baseline=%.3f + current=%.3f = sum=%.3f",
-                             self._attr_unique_id, existing_baseline, current_value, self._attr_sum)
+                _LOGGER.debug(
+                    "Sensor %s: baseline=%.3f + current=%.3f = sum=%.3f",
+                    self._attr_unique_id,
+                    existing_baseline,
+                    current_value,
+                    self._attr_sum,
+                )
 
             return
 
