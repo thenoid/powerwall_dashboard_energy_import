@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from homeassistant.components.recorder.statistics import get_last_statistics
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -201,6 +202,7 @@ async def async_setup_entry(
                 icon,
                 device_class,
                 state_class,
+                hass,
             )
         )
 
@@ -224,6 +226,7 @@ class PowerwallDashboardSensor(SensorEntity):
         icon: str | None,
         device_class,
         state_class,
+        hass: HomeAssistant,
     ) -> None:
         self._entry = entry
         self._influx = influx
@@ -231,6 +234,7 @@ class PowerwallDashboardSensor(SensorEntity):
         self._mode = mode
         self._options = options
         self._device_name = device_name
+        self._hass = hass
 
         # ---- Unique ID is now namespaced per config entry (fixes collisions) ----
         self._attr_unique_id = f"{entry.entry_id}:powerwall_dashboard_{sensor_id}"
@@ -255,6 +259,28 @@ class PowerwallDashboardSensor(SensorEntity):
 
     def _day_mode(self) -> str:
         return self._options.get(OPT_DAY_MODE, DEFAULT_DAY_MODE)
+
+    def _get_existing_baseline(self) -> float:
+        """Get existing cumulative baseline from statistics to ensure smooth continuation."""
+        try:
+            entity_id = f"sensor.{(self._attr_unique_id or '').replace(':', '_')}"
+
+            # Get the last statistic to continue from existing baseline
+            last_stats = get_last_statistics(self._hass, 1, entity_id, True, {"sum"})
+
+            if last_stats and entity_id in last_stats and last_stats[entity_id]:
+                last_stat = last_stats[entity_id][0]
+                if "sum" in last_stat and last_stat["sum"] is not None:
+                    baseline = float(last_stat["sum"])
+                    _LOGGER.debug("Found existing baseline for %s: %.3f kWh", entity_id, baseline)
+                    return baseline
+
+            _LOGGER.debug("No existing baseline found for %s, starting from 0.0", entity_id)
+            return 0.0
+
+        except Exception as e:
+            _LOGGER.warning("Failed to get existing baseline for %s: %s", entity_id, e)
+            return 0.0
 
     def update(self) -> None:  # noqa: C901
         day_mode = self._day_mode()
@@ -324,6 +350,9 @@ class PowerwallDashboardSensor(SensorEntity):
             return
 
         if self._mode in ("kwh_total", "kwh_daily"):
+            # For TOTAL_INCREASING sensors, we need both native_value and sum
+            current_value = 0.0
+
             if day_mode == "local_midnight":
                 midnight_local = (
                     datetime.now()
@@ -336,30 +365,33 @@ class PowerwallDashboardSensor(SensorEntity):
                     f"WHERE time >= '{since_iso}' AND {self._field} > 0"
                 )
                 pts = self._influx.query(q)
-                self._attr_native_value = (
-                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
-                )
-                return
+                current_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
 
-            if day_mode == "rolling_24h":
+            elif day_mode == "rolling_24h":
                 q = (
                     f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
                     f"WHERE time >= now() - 24h AND {self._field} > 0"
                 )
                 pts = self._influx.query(q)
-                self._attr_native_value = (
-                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
-                )
-                return
+                current_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
 
-            if day_mode == "influx_daily_cq":
+            elif day_mode == "influx_daily_cq":
                 pts = self._influx.query(
                     f"SELECT LAST({self._field}) AS value FROM daily.http"
                 )
-                self._attr_native_value = (
-                    round(pts[0].get("value", 0.0), 3) if pts else 0.0
-                )
-                return
+                current_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+
+            # Set the current sensor reading
+            self._attr_native_value = current_value
+
+            # For TOTAL_INCREASING sensors, calculate cumulative sum with baseline coordination
+            if self._attr_state_class == SensorStateClass.TOTAL_INCREASING:
+                existing_baseline = self._get_existing_baseline()
+                self._attr_sum = existing_baseline + current_value
+                _LOGGER.debug("Sensor %s: baseline=%.3f + current=%.3f = sum=%.3f",
+                             self._attr_unique_id, existing_baseline, current_value, self._attr_sum)
+
+            return
 
         if self._mode == "kwh_monthly":
             now_local = datetime.now().astimezone()
