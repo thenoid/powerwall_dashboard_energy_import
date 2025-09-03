@@ -2,6 +2,10 @@
 logs/
 .python-version
 .direnv
+DB_CONFIG.md
+boundary_investigation.txt
+boundary_debug_queries.sql
+ROOT_CAUSE_SUMMARY.md
 
 # Python
 __pycache__/

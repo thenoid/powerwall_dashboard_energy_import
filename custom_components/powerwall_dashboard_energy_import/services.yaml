@@ -31,7 +31,7 @@ backfill:
         text:
     overwrite_existing:
       name: Overwrite existing statistics
-      description: "Replace existing statistics in the date range. WARNING: This will permanently delete existing data."
+      description: "Replace existing statistics in the date range. WARNING: This will permanently delete existing data. For the current day, only backfills up to the current hour to prevent blocking live data collection."
       default: false
       selector:
         boolean:
