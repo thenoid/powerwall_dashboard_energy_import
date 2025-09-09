@@ -158,6 +158,8 @@ class TestPowerwallDashboardSensor:
         entry.options = options or {}
 
         influx = MockInfluxClient()
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test_entry_id": {}}}
 
         defaults = {
             "sensor_id": "test_sensor",
@@ -176,6 +178,7 @@ class TestPowerwallDashboardSensor:
             device_name="Test Device",
             field=field,
             mode=mode,
+            hass=hass,
             **defaults,
         )
 
@@ -185,6 +188,8 @@ class TestPowerwallDashboardSensor:
         entry.entry_id = "test_entry"
 
         influx = MockInfluxClient()
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test_entry": {}}}
         options = {"day_mode": "rolling_24h", "series_source": "raw.http"}
 
         sensor = PowerwallDashboardSensor(
@@ -200,6 +205,7 @@ class TestPowerwallDashboardSensor:
             icon="mdi:solar-power",
             device_class=SensorDeviceClass.POWER,
             state_class=SensorStateClass.MEASUREMENT,
+            hass=hass,
         )
 
         # Test all attributes are set correctly
@@ -248,8 +254,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw(self):
         """Test last_kw mode update."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 2500.0}]),
             options={},
             device_name="Test",
@@ -261,6 +271,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -268,8 +279,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_no_data(self):
         """Test last_kw mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -281,6 +296,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -288,8 +304,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_none_value(self):
         """Test last_kw mode with None value."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": None}]),
             options={},
             device_name="Test",
@@ -301,6 +321,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -308,8 +329,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_battery(self):
         """Test last_kw_combo_battery mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"chg": 1000, "dis": 2000}]),
             options={},
             device_name="Test",
@@ -321,6 +346,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -328,8 +354,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_battery_no_data(self):
         """Test last_kw_combo_battery mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -341,6 +371,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -348,8 +379,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_battery_none_values(self):
         """Test last_kw_combo_battery mode with None values."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"chg": None, "dis": None}]),
             options={},
             device_name="Test",
@@ -361,6 +396,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -368,8 +404,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_grid(self):
         """Test last_kw_combo_grid mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"exp": 3000, "imp": 1500}]),
             options={},
             device_name="Test",
@@ -381,6 +421,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -388,8 +429,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_grid_no_data(self):
         """Test last_kw_combo_grid mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -401,6 +446,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -408,8 +454,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_kw_combo_grid_none_values(self):
         """Test last_kw_combo_grid mode with None values."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"exp": None, "imp": None}]),
             options={},
             device_name="Test",
@@ -421,6 +471,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -428,8 +479,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_percentage(self):
         """Test last mode with percentage field."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 87.5}]),
             options={},
             device_name="Test",
@@ -441,6 +496,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -448,8 +504,12 @@ class TestSensorUpdateMethods:
 
     def test_update_last_percentage_no_data(self):
         """Test last mode with percentage field and no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -461,6 +521,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -468,8 +529,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_battery_charging(self):
         """Test state_battery mode when charging."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"charge": 1500, "discharge": 0}]),
             options={},
             device_name="Test",
@@ -481,6 +546,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -488,8 +554,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_battery_discharging(self):
         """Test state_battery mode when discharging."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"charge": 0, "discharge": 2000}]),
             options={},
             device_name="Test",
@@ -501,6 +571,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -508,8 +579,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_battery_idle(self):
         """Test state_battery mode when idle."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"charge": 0, "discharge": 0}]),
             options={},
             device_name="Test",
@@ -521,6 +596,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -528,8 +604,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_battery_no_data(self):
         """Test state_battery mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -541,6 +621,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -548,8 +629,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_battery_none_values(self):
         """Test state_battery mode with None values."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"charge": None, "discharge": None}]),
             options={},
             device_name="Test",
@@ -561,6 +646,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -568,8 +654,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_grid_producing(self):
         """Test state_grid mode when producing (exporting)."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"export": 3000, "import": 0}]),
             options={},
             device_name="Test",
@@ -581,6 +671,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -588,8 +679,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_grid_consuming(self):
         """Test state_grid mode when consuming (importing)."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"export": 0, "import": 2500}]),
             options={},
             device_name="Test",
@@ -601,6 +696,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -608,8 +704,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_grid_idle(self):
         """Test state_grid mode when idle."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"export": 0, "import": 0}]),
             options={},
             device_name="Test",
@@ -621,6 +721,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -628,8 +729,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_grid_no_data(self):
         """Test state_grid mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -641,6 +746,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -648,8 +754,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_grid_none_values(self):
         """Test state_grid mode with None values."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"export": None, "import": None}]),
             options={},
             device_name="Test",
@@ -661,6 +771,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -668,8 +779,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_island_on_grid(self):
         """Test state_island mode when on-grid."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"val": 1}]),
             options={},
             device_name="Test",
@@ -681,6 +796,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -688,8 +804,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_island_off_grid(self):
         """Test state_island mode when off-grid."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"val": 0}]),
             options={},
             device_name="Test",
@@ -701,6 +821,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -708,8 +829,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_island_unknown(self):
         """Test state_island mode when unknown (no data)."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -721,6 +846,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -728,8 +854,12 @@ class TestSensorUpdateMethods:
 
     def test_update_state_island_none_value(self):
         """Test state_island mode with None value."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"val": None}]),
             options={},
             device_name="Test",
@@ -741,6 +871,7 @@ class TestSensorUpdateMethods:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -757,8 +888,12 @@ class TestSensorKwhModes:
         mock_now = datetime(2023, 8, 15, 14, 30, 0, tzinfo=timezone.utc)
         mock_datetime.now.return_value = mock_now
 
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 12.5}]),
             options={"day_mode": "local_midnight"},
             device_name="Test",
@@ -770,6 +905,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -777,8 +913,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_daily_rolling_24h(self):
         """Test kwh_daily mode with rolling_24h day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 8.3}]),
             options={"day_mode": "rolling_24h"},
             device_name="Test",
@@ -790,6 +930,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -797,8 +938,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_daily_influx_daily_cq(self):
         """Test kwh_daily mode with influx_daily_cq day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 15.7}]),
             options={"day_mode": "influx_daily_cq"},
             device_name="Test",
@@ -810,6 +955,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -817,8 +963,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_daily_no_data(self):
         """Test kwh_daily mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={"day_mode": "rolling_24h"},
             device_name="Test",
@@ -830,10 +980,43 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
         assert sensor._attr_native_value == 0.0
+
+    def test_update_kwh_daily_with_sum_calculation(self):
+        """Test kwh_daily mode with TOTAL_INCREASING state_class sum calculation."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Create a sensor with TOTAL_INCREASING state class to test sum calculation
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=MockInfluxClient([{"value": 8.25}]),  # Current daily value
+            options={"day_mode": "local_midnight"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_daily",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=SensorDeviceClass.ENERGY,
+            state_class=SensorStateClass.TOTAL_INCREASING,
+            hass=hass,
+        )
+
+        # Mock the _get_existing_baseline method to return a different baseline
+        with patch.object(sensor, '_get_existing_baseline', return_value=58.33):
+            sensor.update()
+
+        # Check that current daily value is set correctly
+        assert sensor._attr_native_value == 8.25
+        # Check that sum is set from InfluxDB baseline (lines 438-439)
+        assert sensor._attr_sum == 58.33
 
     @patch("custom_components.powerwall_dashboard_energy_import.sensor.datetime")
     def test_update_kwh_total_local_midnight(self, mock_datetime):
@@ -842,8 +1025,12 @@ class TestSensorKwhModes:
         mock_now = datetime(2023, 8, 15, 14, 30, 0, tzinfo=timezone.utc)
         mock_datetime.now.return_value = mock_now
 
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 42.1}]),
             options={"day_mode": "local_midnight"},
             device_name="Test",
@@ -855,6 +1042,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -862,8 +1050,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_total_rolling_24h(self):
         """Test kwh_total mode with rolling_24h day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 33.8}]),
             options={"day_mode": "rolling_24h"},
             device_name="Test",
@@ -875,6 +1067,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -882,8 +1075,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_total_influx_daily_cq(self):
         """Test kwh_total mode with influx_daily_cq day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 27.6}]),
             options={"day_mode": "influx_daily_cq"},
             device_name="Test",
@@ -895,10 +1092,43 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
         assert sensor._attr_native_value == 27.6
+
+    def test_update_kwh_total_with_sum_calculation(self):
+        """Test kwh_total mode with TOTAL_INCREASING state_class sum calculation."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Create a sensor with TOTAL_INCREASING state class to test sum calculation (lines 438-440)
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=MockInfluxClient([{"value": 15.5}]),  # Current value
+            options={"day_mode": "rolling_24h"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=SensorDeviceClass.ENERGY,
+            state_class=SensorStateClass.TOTAL_INCREASING,  # This triggers sum calculation
+            hass=hass,
+        )
+
+        # Mock the _get_existing_baseline method to return a known value
+        with patch.object(sensor, '_get_existing_baseline', return_value=125.75):
+            sensor.update()
+
+        # Check that current value is set correctly
+        assert sensor._attr_native_value == 15.5
+        # Check that sum is set from InfluxDB baseline (lines 438-439)
+        assert sensor._attr_sum == 125.75
 
     @patch("custom_components.powerwall_dashboard_energy_import.sensor.datetime")
     def test_update_kwh_monthly_integral(self, mock_datetime):
@@ -907,8 +1137,12 @@ class TestSensorKwhModes:
         mock_now = datetime(2023, 8, 15, 14, 30, 0, tzinfo=timezone.utc)
         mock_datetime.now.return_value = mock_now
 
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 456.7}]),
             options={"day_mode": "local_midnight"},
             device_name="Test",
@@ -920,6 +1154,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -932,8 +1167,12 @@ class TestSensorKwhModes:
         mock_now = datetime(2023, 8, 15, 14, 30, 0, tzinfo=timezone.utc)
         mock_datetime.now.return_value = mock_now
 
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([{"value": 298.4}]),
             options={"day_mode": "influx_daily_cq"},
             device_name="Test",
@@ -945,6 +1184,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -952,8 +1192,12 @@ class TestSensorKwhModes:
 
     def test_update_kwh_monthly_no_data(self):
         """Test kwh_monthly mode with no data."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={"day_mode": "rolling_24h"},
             device_name="Test",
@@ -965,6 +1209,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -972,8 +1217,12 @@ class TestSensorKwhModes:
 
     def test_update_unknown_mode(self):
         """Test unknown mode returns None."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -985,6 +1234,7 @@ class TestSensorKwhModes:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         sensor.update()
@@ -1017,13 +1267,193 @@ class TestSensorDefinitions:
         assert SCAN_INTERVAL == timedelta(seconds=60)
 
 
+class TestSensorBaselineMethod:
+    """Test the _get_existing_baseline() method comprehensively."""
+
+    @patch("custom_components.powerwall_dashboard_energy_import.sensor.datetime")
+    def test_get_existing_baseline_local_midnight(self, mock_datetime):
+        """Test _get_existing_baseline with local_midnight day_mode."""
+        # Mock current time
+        mock_now = datetime(2023, 8, 15, 14, 30, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = mock_now
+
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Mock InfluxDB client to return baseline value
+        influx_client = MockInfluxClient([{"value": 25.123}])
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "local_midnight"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 25.123
+
+    def test_get_existing_baseline_rolling_24h(self):
+        """Test _get_existing_baseline with rolling_24h day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Mock InfluxDB client to return baseline value
+        influx_client = MockInfluxClient([{"value": 42.567}])
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "rolling_24h"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 42.567
+
+    def test_get_existing_baseline_influx_daily_cq(self):
+        """Test _get_existing_baseline with influx_daily_cq day_mode."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Mock InfluxDB client to return baseline value
+        influx_client = MockInfluxClient([{"value": 18.999}])
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "influx_daily_cq"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 18.999
+
+    def test_get_existing_baseline_unknown_day_mode(self):
+        """Test _get_existing_baseline with unknown day_mode returns 0.0."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        influx_client = MockInfluxClient([])
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "unknown_mode"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 0.0
+
+    def test_get_existing_baseline_no_data(self):
+        """Test _get_existing_baseline with no data returns 0.0."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        influx_client = MockInfluxClient([])  # No data
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "rolling_24h"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 0.0
+
+    def test_get_existing_baseline_exception_handling(self):
+        """Test _get_existing_baseline handles exceptions gracefully."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+
+        # Mock InfluxDB client to raise exception
+        influx_client = Mock()
+        influx_client.query.side_effect = Exception("Connection error")
+
+        sensor = PowerwallDashboardSensor(
+            entry=entry,
+            influx=influx_client,
+            options={"day_mode": "rolling_24h"},
+            device_name="Test",
+            sensor_id="test",
+            name="Test",
+            field="solar",
+            mode="kwh_total",
+            unit=UnitOfEnergy.KILO_WATT_HOUR,
+            icon=None,
+            device_class=None,
+            state_class=None,
+            hass=hass,
+        )
+
+        baseline = sensor._get_existing_baseline()
+        assert baseline == 0.0
+
+
 class TestSensorEdgeCases:
     """Test edge cases and error scenarios."""
 
     def test_sensor_with_empty_options(self):
         """Test sensor with empty options dict."""
+        entry = Mock(entry_id="test")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test"),
+            entry=entry,
             influx=MockInfluxClient([]),
             options={},
             device_name="Test",
@@ -1035,6 +1465,7 @@ class TestSensorEdgeCases:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         # Should use defaults
@@ -1043,8 +1474,12 @@ class TestSensorEdgeCases:
 
     def test_sensor_with_none_options(self):
         """Test sensor with None as options."""
+        entry = Mock(entry_id="test", options=None)
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"test": {}}}
+        
         sensor = PowerwallDashboardSensor(
-            entry=Mock(entry_id="test", options=None),
+            entry=entry,
             influx=MockInfluxClient([]),
             options=None,
             device_name="Test",
@@ -1056,6 +1491,7 @@ class TestSensorEdgeCases:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         # Should handle None gracefully
@@ -1064,6 +1500,9 @@ class TestSensorEdgeCases:
     def test_device_info_structure(self):
         """Test device_info has correct structure."""
         entry = Mock(entry_id="unique_test_id")
+        hass = Mock(spec=HomeAssistant)
+        hass.data = {DOMAIN: {"unique_test_id": {}}}
+        
         sensor = PowerwallDashboardSensor(
             entry=entry,
             influx=MockInfluxClient([]),
@@ -1077,6 +1516,7 @@ class TestSensorEdgeCases:
             icon=None,
             device_class=None,
             state_class=None,
+            hass=hass,
         )
 
         expected_device_info = {

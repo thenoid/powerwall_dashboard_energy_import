@@ -40,6 +40,18 @@ Import historical statistics from InfluxDB into Home Assistant's Energy Dashboar
 - Manual: https://github.com/frenck/spook
 
 ### Usage
+
+**Recommended: Pause-and-Complete Backfill** (prevents data corruption):
+```yaml
+action: powerwall_dashboard_energy_import.backfill_from_date_to_now
+data:
+  start: "2024-01-01"          # Backfill from this date to current time
+  sensor_prefix: "Powerwall"   # Optional: target specific integration
+```
+
+📝 **Expected Behavior**: You may see a one-time MySQL duplicate key error in the logs after running this service. This is normal and indicates successful operation - it occurs when the backfill includes the current hour and Home Assistant's recorder later tries to compile the same hourly statistics. The error is harmless and prevents boundary discontinuities.
+
+**Advanced: Full Control Backfill**:
 ```yaml
 action: powerwall_dashboard_energy_import.backfill
 data:
@@ -53,9 +65,21 @@ action: powerwall_dashboard_energy_import.backfill
 data:
   start: "2024-01-01"
   end: "2024-12-31"
+  overwrite_existing: false    # Optional: append mode (default)
 ```
 
+### Key Differences
+- **`backfill_from_date_to_now`**: Automatically pauses live sensors during backfill to prevent baseline corruption. **Recommended for most users**.
+- **`backfill`**: Full control over date ranges and overwrite behavior. Use when you need specific date ranges or overwrite mode.
+
 ⚠️ **Warning**: This directly modifies the recorder database. Use with caution and backup your database first.
+
+### Troubleshooting
+- **"No new statistics to import"**: Check InfluxDB has data for the specified date range
+- **Massive energy spikes**: Use `backfill_from_date_to_now` instead of `backfill` to prevent baseline corruption
+- **MySQL duplicate key error**: Expected one-time error when backfill includes current hour. This indicates successful operation - backfill imported statistics for the current hour, then Home Assistant's normal recorder tried to create the same hourly statistics. The error is harmless, won't repeat on subsequent runs, and confirms no boundary discontinuities occurred.
+- **Missing Spook error**: Install the Spook integration - standard HA statistics API can't import data for entities with state_class
+- **Service not found**: Restart Home Assistant after installation
 
 ## Teslemetry Migration
 Migrate historical energy statistics from Teslemetry to preserve your Energy Dashboard data:

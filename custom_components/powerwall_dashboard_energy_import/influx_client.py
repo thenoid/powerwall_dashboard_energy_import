@@ -168,6 +168,156 @@ class InfluxClient:
 
         return hourly_values
 
+    def get_minutely_kwh(
+        self, field: str, day: date, series: str, target_timezone: str = "UTC"
+    ) -> list[float]:
+        """Fetch minute-level kWh values for a given field on a specific day.
+
+        Returns a list of 1440 floats representing energy for each minute (0-1439).
+        This provides maximum granularity to eliminate boundary discontinuities.
+
+        Args:
+            field: The field to query (e.g., 'solar_power')
+            day: The date to query for
+            series: The InfluxDB series name
+            target_timezone: Target timezone for minute assignment (default: UTC)
+        """
+        # Convert target day to UTC bounds for InfluxDB query
+        import zoneinfo
+        from datetime import datetime
+
+        # Create timezone objects
+        target_tz = (
+            zoneinfo.ZoneInfo(target_timezone) if target_timezone != "UTC" else None
+        )
+        utc_tz = zoneinfo.ZoneInfo("UTC")
+
+        if target_tz:
+            # Convert day start/end from target timezone to UTC
+            day_start_local = datetime(
+                day.year, day.month, day.day, 0, 0, 0, tzinfo=target_tz
+            )
+            day_end_local = datetime(
+                day.year, day.month, day.day, 23, 59, 59, tzinfo=target_tz
+            )
+            day_start_utc = day_start_local.astimezone(utc_tz)
+            day_end_utc = day_end_local.astimezone(utc_tz)
+        else:
+            # Already in UTC
+            day_start_utc = datetime(
+                day.year, day.month, day.day, 0, 0, 0, tzinfo=utc_tz
+            )
+            day_end_utc = datetime(
+                day.year, day.month, day.day, 23, 59, 59, tzinfo=utc_tz
+            )
+
+        day_start = day_start_utc.isoformat().replace("+00:00", "Z")
+        day_end = day_end_utc.isoformat().replace("+00:00", "Z")
+
+        # Query with 1-minute intervals
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time >= '{day_start}' AND time <= '{day_end}' AND {field} > 0 "
+            f"GROUP BY time(1m) fill(0)"
+        )
+        result = self.query(query)
+
+        # Initialize 1440-minute array with zeros (24 hours * 60 minutes)
+        minutely_values = [0.0] * 1440
+
+        if result:
+            for entry in result:
+                if "time" in entry and "value" in entry:
+                    # Parse UTC timestamp and convert to target timezone minute
+                    time_str = entry["time"]
+                    utc_dt = datetime.fromisoformat(time_str.replace("Z", "+00:00"))
+
+                    if target_tz:
+                        local_dt = utc_dt.astimezone(target_tz)
+                        # Check if this timestamp falls within our target day
+                        if local_dt.date() == day:
+                            minute_of_day = local_dt.hour * 60 + local_dt.minute
+                            if 0 <= minute_of_day < 1440:
+                                minutely_values[minute_of_day] = round(
+                                    entry.get("value", 0.0), 3
+                                )
+                    else:
+                        # UTC - parse minute directly
+                        time_parts = time_str.split("T")[1].split(":")
+                        hour = int(time_parts[0])
+                        minute = int(time_parts[1])
+                        minute_of_day = hour * 60 + minute
+                        if 0 <= minute_of_day < 1440:
+                            minutely_values[minute_of_day] = round(
+                                entry.get("value", 0.0), 3
+                            )
+
+        return minutely_values
+
+    def get_cumulative_total_at_timestamp(
+        self, field: str, series: str, timestamp: str, target_timezone: str = "UTC"
+    ) -> float:
+        """Get cumulative energy total at a specific timestamp for clean baseline.
+
+        Args:
+            field: The field to query (e.g., 'to_pw', 'from_pw')
+            series: The InfluxDB series name
+            timestamp: ISO timestamp to query up to
+            target_timezone: Target timezone for the query
+
+        Returns:
+            Cumulative energy in kWh at the specified timestamp
+        """
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time <= '{timestamp}' AND {field} > 0"
+        )
+
+        try:
+            result = self.query(query)
+            if result:
+                cumulative_total = result[0].get("value", 0.0)
+                return round(cumulative_total, 3)
+            return 0.0
+        except Exception as e:
+            _LOGGER.error(f"Failed to get cumulative total at {timestamp}: {e}")
+            return 0.0
+
+    def get_current_energy_baseline(
+        self, field: str, series: str, target_timezone: str = "UTC"
+    ) -> float:
+        """Get current cumulative energy baseline for bridge statistic continuity.
+
+        This queries InfluxDB for the most recent cumulative energy value that
+        live sensors will use as their baseline, preventing boundary discontinuities.
+
+        Args:
+            field: The field to query (e.g., 'to_pw', 'from_pw')
+            series: The InfluxDB series name
+            target_timezone: Target timezone for the query
+
+        Returns:
+            Current cumulative energy in kWh that live sensor will use as baseline
+        """
+
+        # Query for total cumulative energy from start of time until now
+        # This matches what live sensors calculate as their baseline
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time < now() AND {field} > 0"
+        )
+
+        result = self.query(query)
+        baseline = round(result[0].get("value", 0.0), 3) if result else 0.0
+
+        _LOGGER.debug(
+            "BRIDGE BASELINE: Retrieved %.3f kWh from InfluxDB for %s (matches live sensor baseline)",
+            baseline,
+            field,
+        )
+
+        return baseline
+
     def get_history(self) -> list[str]:
         """Return a list of recent queries (most recent last)."""
         return list(self._history)

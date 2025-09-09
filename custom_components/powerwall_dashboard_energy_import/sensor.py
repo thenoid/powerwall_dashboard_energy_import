@@ -6,7 +6,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from homeassistant.components.recorder.statistics import get_last_statistics
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -234,6 +233,7 @@ class PowerwallDashboardSensor(SensorEntity):
         self._mode = mode
         self._options = options
         self._device_name = device_name
+        self._sensor_id = sensor_id
         self._hass = hass
 
         # ---- Unique ID is now namespaced per config entry (fixes collisions) ----
@@ -261,29 +261,73 @@ class PowerwallDashboardSensor(SensorEntity):
         return self._options.get(OPT_DAY_MODE, DEFAULT_DAY_MODE)
 
     def _get_existing_baseline(self) -> float:
-        """Get existing cumulative baseline from statistics to ensure smooth continuation."""
+        """Get existing cumulative baseline from InfluxDB to ensure consistency with backfill."""
         try:
-            entity_id = f"sensor.{(self._attr_unique_id or '').replace(':', '_')}"
+            # Use the same calculation as backfill - get integral from midnight to now via InfluxDB
+            day_mode = self._day_mode()
+            series = self._series_source()
 
-            # Get the last statistic to continue from existing baseline
-            last_stats = get_last_statistics(self._hass, 1, entity_id, True, {"sum"})
+            if day_mode == "local_midnight":
+                from datetime import datetime, timezone
 
-            if last_stats and entity_id in last_stats and last_stats[entity_id]:
-                last_stat = last_stats[entity_id][0]
-                if "sum" in last_stat and last_stat["sum"] is not None:
-                    baseline = float(last_stat["sum"])
-                    _LOGGER.debug(
-                        "Found existing baseline for %s: %.3f kWh", entity_id, baseline
-                    )
-                    return baseline
+                midnight_local = (
+                    datetime.now()
+                    .astimezone()
+                    .replace(hour=0, minute=0, second=0, microsecond=0)
+                )
+                since_iso = midnight_local.astimezone(timezone.utc).isoformat()
+                q = (
+                    f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
+                    f"WHERE time >= '{since_iso}' AND {self._field} > 0"
+                )
+                pts = self._influx.query(q)
+                baseline = round(pts[0].get("value", 0.0), 3) if pts else 0.0
 
-            _LOGGER.debug(
-                "No existing baseline found for %s, starting from 0.0", entity_id
-            )
+                _LOGGER.debug(
+                    "InfluxDB baseline for %s: %.3f kWh (from midnight %s)",
+                    self._sensor_id,
+                    baseline,
+                    since_iso,
+                )
+                return baseline
+
+            elif day_mode == "rolling_24h":
+                q = (
+                    f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
+                    f"WHERE time >= now() - 24h AND {self._field} > 0"
+                )
+                pts = self._influx.query(q)
+                baseline = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+
+                _LOGGER.debug(
+                    "InfluxDB baseline for %s: %.3f kWh (rolling 24h)",
+                    self._sensor_id,
+                    baseline,
+                )
+                return baseline
+
+            elif day_mode == "influx_daily_cq":
+                pts = self._influx.query(
+                    f"SELECT LAST({self._field}) AS value FROM daily.http"
+                )
+                baseline = round(pts[0].get("value", 0.0), 3) if pts else 0.0
+
+                _LOGGER.debug(
+                    "InfluxDB baseline for %s: %.3f kWh (daily CQ)",
+                    self._sensor_id,
+                    baseline,
+                )
+                return baseline
+
+            _LOGGER.debug("Unknown day_mode %s, using 0.0 baseline", day_mode)
             return 0.0
 
         except Exception as e:
-            _LOGGER.warning("Failed to get existing baseline for %s: %s", entity_id, e)
+            _LOGGER.warning(
+                "Failed to get InfluxDB baseline for %s: %s",
+                self._sensor_id,
+                e,
+            )
             return 0.0
 
     def update(self) -> None:  # noqa: C901
@@ -388,16 +432,16 @@ class PowerwallDashboardSensor(SensorEntity):
             # Set the current sensor reading
             self._attr_native_value = current_value
 
-            # For TOTAL_INCREASING sensors, calculate cumulative sum with baseline coordination
+            # For TOTAL_INCREASING sensors, use InfluxDB baseline as the cumulative sum
             if self._attr_state_class == SensorStateClass.TOTAL_INCREASING:
-                existing_baseline = self._get_existing_baseline()
-                self._attr_sum = existing_baseline + current_value
+                # Get baseline from InfluxDB (already includes current_value via integral calculation)
+                influx_cumulative = self._get_existing_baseline()
+                self._attr_sum = influx_cumulative
                 _LOGGER.debug(
-                    "Sensor %s: baseline=%.3f + current=%.3f = sum=%.3f",
+                    "Sensor %s: InfluxDB cumulative=%.3f kWh, current=%.3f kWh",
                     self._attr_unique_id,
-                    existing_baseline,
+                    influx_cumulative,
                     current_value,
-                    self._attr_sum,
                 )
 
             return
