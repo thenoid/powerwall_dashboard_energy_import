@@ -859,14 +859,16 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
     dry_run = call.data.get("dry_run", False)
     overwrite_existing = call.data.get("overwrite_existing", False)
     merge_strategy = call.data.get("merge_strategy", "prioritize_influx")
+    auto_backfill = call.data.get("auto_backfill", True)
 
     _LOGGER.info(
-        "Migration parameters - auto_discover: %s, entity_prefix: %s, sensor_prefix: %s, dry_run: %s, merge_strategy: %s",
+        "Migration parameters - auto_discover: %s, entity_prefix: %s, sensor_prefix: %s, dry_run: %s, merge_strategy: %s, auto_backfill: %s",
         auto_discover,
         entity_prefix,
         sensor_prefix,
         dry_run,
         merge_strategy,
+        auto_backfill,
     )
 
     # Check if Spook's recorder.import_statistics service is available
@@ -1061,6 +1063,23 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
                 "MIGRATION COMPLETE: Successfully migrated %d total statistics entries",
                 total_migrated,
             )
+
+        # Auto-trigger backfill if enabled and migration was successful
+        if auto_backfill and total_migrated > 0 and not dry_run:
+            _LOGGER.info("=== AUTO-BACKFILL PHASE STARTING ===")
+            _LOGGER.info(
+                "Triggering backfill to overwrite migrated data with higher-quality InfluxDB data where available"
+            )
+            
+            try:
+                await _trigger_auto_backfill(
+                    hass, target_entry, sensor_prefix, overwrite_existing
+                )
+            except Exception as e:
+                _LOGGER.error(
+                    "Auto-backfill failed, but migration was successful: %s", e
+                )
+                # Don't re-raise - migration succeeded even if backfill failed
 
     except Exception as e:
         _LOGGER.error("Migration service failed: %s", e)
@@ -1577,6 +1596,101 @@ async def _import_statistics_via_spook(
     _LOGGER.debug(
         "Imported %d total statistics entries for %s", total_imported, entity_id
     )
+
+
+async def _trigger_auto_backfill(
+    hass: HomeAssistant,
+    target_entry: ConfigEntry,
+    sensor_prefix: str | None,
+    overwrite_existing: bool,
+) -> None:
+    """Trigger automatic backfill after Teslemetry migration to overwrite with InfluxDB data."""
+    try:
+        # Get the InfluxDB client from the target entry
+        if target_entry.entry_id not in hass.data.get(DOMAIN, {}):
+            _LOGGER.warning(
+                "Target integration entry %s not found in domain data, cannot trigger auto-backfill",
+                target_entry.entry_id,
+            )
+            return
+
+        store = hass.data[DOMAIN][target_entry.entry_id]
+        client: InfluxClient = store.get("client")
+        if not client:
+            _LOGGER.warning(
+                "InfluxDB client not found for entry %s, cannot trigger auto-backfill",
+                target_entry.entry_id,
+            )
+            return
+
+        # Check if InfluxDB has any data at all
+        try:
+            # Use get_first_timestamp to find earliest available InfluxDB data
+            first_timestamp = await hass.async_add_executor_job(
+                client.get_first_timestamp
+            )
+            if not first_timestamp:
+                _LOGGER.info(
+                    "No InfluxDB data found, skipping auto-backfill (migration data will remain as-is)"
+                )
+                return
+
+            # Convert to date string for backfill service
+            from datetime import datetime
+            if isinstance(first_timestamp, str):
+                # Parse ISO string to datetime
+                first_dt = datetime.fromisoformat(first_timestamp.replace('Z', '+00:00'))
+            else:
+                first_dt = first_timestamp
+            
+            start_date_str = first_dt.strftime("%Y-%m-%d")
+            
+            _LOGGER.info(
+                "InfluxDB data available from %s, triggering backfill to overwrite migrated data",
+                start_date_str,
+            )
+
+            # Create service call data for backfill
+            backfill_data = {
+                "all": False,
+                "start": start_date_str,
+                "overwrite_existing": True,  # Always overwrite for auto-backfill
+            }
+            
+            # Add sensor_prefix if specified
+            if sensor_prefix:
+                backfill_data["sensor_prefix"] = sensor_prefix
+
+            # Create a service call object and trigger backfill
+            from homeassistant.core import ServiceCall
+            backfill_call = ServiceCall(
+                domain=DOMAIN,
+                service="backfill",
+                data=backfill_data,
+                context=None,
+                hass=hass,
+            )
+
+            _LOGGER.info(
+                "AUTO-BACKFILL: Calling backfill service with data: %s",
+                backfill_data,
+            )
+            
+            await async_handle_backfill(backfill_call)
+            
+            _LOGGER.info(
+                "=== AUTO-BACKFILL COMPLETE: InfluxDB data has overwritten migrated data where available ==="
+            )
+
+        except Exception as e:
+            _LOGGER.error(
+                "Failed to query InfluxDB for auto-backfill range detection: %s", e
+            )
+            raise
+
+    except Exception as e:
+        _LOGGER.error("Auto-backfill trigger failed: %s", e)
+        raise
 
 
 async def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:
