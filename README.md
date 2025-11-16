@@ -81,6 +81,110 @@ data:
 - **Missing Spook error**: Install the Spook integration - standard HA statistics API can't import data for entities with state_class
 - **Service not found**: Restart Home Assistant after installation
 
+## Database Repair Tool (First-Time Setup)
+
+### Why This Is Needed
+
+When you first install this integration and run the backfill service, Home Assistant's `TOTAL_INCREASING` sensor logic can detect discontinuities between the backfilled historical data and the live sensor data. This triggers HA's "meter reset detection," which causes massive spikes (5,000+ kWh jumps) in the Energy Dashboard.
+
+**The Problem:**
+1. You install the integration → Live sensors start from zero
+2. You run backfill → Historical data gets imported
+3. Home Assistant detects the discontinuity → Creates massive spikes in Energy Dashboard
+4. Auto-healing inside the integration isn't possible (HA processes the discontinuity immediately)
+
+**The Solution:** Repair the database directly while Home Assistant is stopped.
+
+### First-Time Installation Workflow
+
+**For new installations, follow this workflow to avoid Energy Dashboard spikes:**
+
+1. **Install the integration** (Config Flow)
+2. **Run the backfill service** to import historical data
+3. **Stop Home Assistant**
+4. **Backup your database:**
+   ```bash
+   mysqldump -u homeassistant -p ha_db > ha_backup_$(date +%Y%m%d).sql
+   ```
+5. **Run the database repair script** (see below)
+6. **Restart Home Assistant** → Energy Dashboard shows correct values ✅
+
+### Using the Repair Script
+
+The `fix_energy_dashboard_spikes.py` script detects and repairs statistics that cause Energy Dashboard spikes.
+
+**Step 1: Analyze (identify spikes)**
+```bash
+python3 fix_energy_dashboard_spikes.py \
+  --mariadb-host 192.168.1.100 \
+  --mariadb-user homeassistant \
+  --mariadb-pass YOUR_PASSWORD \
+  --mariadb-db homeassistant \
+  --influx-host 192.168.1.100 \
+  --influx-port 8087 \
+  --influx-db powerwall \
+  --sensor-prefix "7579_pwd" \
+  --analyze 2025-11-15
+```
+
+**Step 2: Fix (repair identified spikes)**
+```bash
+python3 fix_energy_dashboard_spikes.py \
+  --mariadb-host 192.168.1.100 \
+  --mariadb-user homeassistant \
+  --mariadb-pass YOUR_PASSWORD \
+  --mariadb-db homeassistant \
+  --influx-host 192.168.1.100 \
+  --influx-port 8087 \
+  --influx-db powerwall \
+  --sensor-prefix "7579_pwd" \
+  --fix 2025-11-15
+```
+
+**Required Parameters:**
+- `--mariadb-host`: Home Assistant database host
+- `--mariadb-user`: Database username (usually `homeassistant`)
+- `--mariadb-pass`: Database password
+- `--mariadb-db`: Database name (usually `homeassistant`)
+- `--influx-host`: InfluxDB host (from powerwall-dashboard)
+- `--influx-port`: InfluxDB port (default: `8087`)
+- `--influx-db`: InfluxDB database name (usually `powerwall`)
+- `--sensor-prefix`: Your Powerwall name/prefix (e.g., `7579_pwd` or `Powerwall`)
+
+**Finding Your Sensor Prefix:**
+```bash
+# Connect to MariaDB
+mysql -h HOST -u homeassistant -p homeassistant
+
+# List all powerwall sensors
+SELECT statistic_id FROM statistics_meta WHERE statistic_id LIKE '%powerwall%' LIMIT 5;
+
+# Extract the prefix from sensor names like: sensor.7579_pwd_solar_generated_daily
+# The prefix is the part between "sensor." and the sensor type (e.g., "7579_pwd")
+```
+
+### How It Works
+
+The repair script:
+1. **Detects spikes** by analyzing hour-to-hour jumps (e.g., >20 kWh battery charge per hour)
+2. **Calculates correct values** from InfluxDB using cumulative integrals
+3. **Updates corrupted statistics** with proper cumulative totals from InfluxDB
+4. **Validates connections** before making any changes
+5. **Requires explicit confirmation** with backup instructions
+
+**Safety Features:**
+- ✅ Connection validation before proceeding
+- ✅ Explicit backup reminders
+- ✅ Transaction control (rollback on error)
+- ✅ Analyze mode (dry-run) to preview changes
+- ✅ Detailed logging of all operations
+
+### When to Use
+
+**First-time setup:** Always use after initial backfill
+**After Teslemetry migration:** Use if you see spikes after migrating
+**Normal operation:** Not needed - only for initial setup or one-time migrations
+
 ## Teslemetry Migration
 Migrate historical energy statistics from Teslemetry to preserve your Energy Dashboard data:
 

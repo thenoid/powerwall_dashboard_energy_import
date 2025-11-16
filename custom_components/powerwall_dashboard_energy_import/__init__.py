@@ -74,7 +74,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "client": client,
         "config": entry.data,
         "pw_name": pw_name,
-        "backfill_active": False,
     }
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -85,11 +84,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     if not hass.services.has_service(DOMAIN, "migrate_from_teslemetry"):
         hass.services.async_register(
             DOMAIN, "migrate_from_teslemetry", async_handle_teslemetry_migration
-        )
-
-    if not hass.services.has_service(DOMAIN, "backfill_from_date_to_now"):
-        hass.services.async_register(
-            DOMAIN, "backfill_from_date_to_now", async_handle_backfill_to_now
         )
 
     return True
@@ -107,13 +101,19 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     sensor_prefix = call.data.get("sensor_prefix")
     overwrite_existing = call.data.get("overwrite_existing", False)
 
+    # Hour range parameters for surgical backfills
+    start_hour = call.data.get("start_hour")
+    end_hour = call.data.get("end_hour")
+
     _LOGGER.info(
-        "Parameters - all: %s, start: %s, end: %s, prefix: %s, overwrite: %s",
+        "Parameters - all: %s, start: %s, end: %s, prefix: %s, overwrite: %s, hour_range: %s-%s",
         use_all,
         start_str,
         end_str,
         sensor_prefix,
         overwrite_existing,
+        start_hour,
+        end_hour,
     )
 
     if not use_all and not start_str:
@@ -121,6 +121,32 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
             "Backfill service requires either 'all' or 'start' to be specified."
         )
         return
+
+    # Validate hour range parameters for surgical backfills
+    if start_hour is not None or end_hour is not None:
+        if start_hour is None or end_hour is None:
+            _LOGGER.error(
+                "Both start_hour and end_hour must be specified for hour-range backfill."
+            )
+            return
+
+        if not (0 <= start_hour <= 23):
+            _LOGGER.error("start_hour must be between 0 and 23, got %s", start_hour)
+            return
+
+        if not (1 <= end_hour <= 24):
+            _LOGGER.error("end_hour must be between 1 and 24, got %s", end_hour)
+            return
+
+        if start_hour >= end_hour:
+            _LOGGER.error(
+                "start_hour (%s) must be less than end_hour (%s)", start_hour, end_hour
+            )
+            return
+
+        _LOGGER.info(
+            "HOUR-RANGE BACKFILL: Validated hour range %d-%d", start_hour, end_hour
+        )
 
     target_entry: ConfigEntry | None = None
     available_entries = hass.config_entries.async_entries(DOMAIN)
@@ -205,209 +231,96 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     ent_reg = async_get_entity_registry(hass)
     _LOGGER.info("Starting entity processing...")
 
-    try:
-        _LOGGER.info("Starting backfill operation (sensors will remain active)")
-        # No pause needed - both systems use same InfluxDB data source
-        for sensor_id_suffix, influx_field in BACKFILL_FIELDS.items():
-            _LOGGER.info("Processing sensor: %s -> %s", sensor_id_suffix, influx_field)
-            unique_id = (
-                f"{target_entry.entry_id}:powerwall_dashboard_{sensor_id_suffix}"
+    for sensor_id_suffix, influx_field in BACKFILL_FIELDS.items():
+        _LOGGER.info("Processing sensor: %s -> %s", sensor_id_suffix, influx_field)
+        unique_id = f"{target_entry.entry_id}:powerwall_dashboard_{sensor_id_suffix}"
+        _LOGGER.info("Looking for unique_id: %s", unique_id)
+
+        entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
+        _LOGGER.info("Found entity_id: %s", entity_id)
+
+        if not entity_id:
+            _LOGGER.warning("Could not find entity for unique_id: %s", unique_id)
+            continue
+
+        entity_entry = ent_reg.async_get(entity_id)
+        if not entity_entry:
+            _LOGGER.warning("Could not find entity registry entry for: %s", entity_id)
+            continue
+
+        _LOGGER.info("Found entity entry for: %s", entity_id)
+
+        _LOGGER.debug("Processing backfill for %s (%s)", entity_id, influx_field)
+        _LOGGER.info(
+            "Entity details - ID: %s, Name: %s, Original Name: %s",
+            entity_id,
+            entity_entry.name,
+            entity_entry.original_name,
+        )
+
+        # metadata = StatisticMetaData(
+        #     has_mean=False,
+        #     has_sum=True,
+        #     name=entity_entry.name or entity_entry.original_name,
+        #     source=DOMAIN,
+        #     statistic_id=entity_id,
+        #     unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        # )
+
+        # _LOGGER.info("Statistics metadata: %s", metadata)
+
+        # Use Home Assistant's configured timezone
+        ha_timezone = hass.config.time_zone
+        tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
+
+        stats = []
+
+        # Handle overwrite logic BEFORE calculating statistics
+        cumulative_base = 0.0
+
+        # Determine if we should overwrite based on whether any date in range is current day
+        today = datetime.now(tz).date()
+        has_current_day = start_date <= today <= end_date
+        should_overwrite = overwrite_existing and not has_current_day
+
+        if has_current_day and overwrite_existing:
+            _LOGGER.warning(
+                "Current day %s is in range %s to %s with overwrite_existing=true. Switching to append mode to preserve live sensor data.",
+                today.isoformat(),
+                start_date.isoformat(),
+                end_date.isoformat(),
             )
-            _LOGGER.info("Looking for unique_id: %s", unique_id)
 
-            entity_id = ent_reg.async_get_entity_id("sensor", DOMAIN, unique_id)
-            _LOGGER.info("Found entity_id: %s", entity_id)
-
-            if not entity_id:
-                _LOGGER.warning("Could not find entity for unique_id: %s", unique_id)
-                continue
-
-            entity_entry = ent_reg.async_get(entity_id)
-            if not entity_entry:
-                _LOGGER.warning(
-                    "Could not find entity registry entry for: %s", entity_id
-                )
-                continue
-
-            _LOGGER.info("Found entity entry for: %s", entity_id)
-
-            _LOGGER.debug("Processing backfill for %s (%s)", entity_id, influx_field)
-            _LOGGER.info(
-                "Entity details - ID: %s, Name: %s, Original Name: %s",
+        if should_overwrite:
+            _LOGGER.warning(
+                "Overwrite enabled - clearing existing statistics for %s from %s to %s",
                 entity_id,
-                entity_entry.name,
-                entity_entry.original_name,
+                start_date,
+                end_date,
             )
 
-            # metadata = StatisticMetaData(
-            #     has_mean=False,
-            #     has_sum=True,
-            #     name=entity_entry.name or entity_entry.original_name,
-            #     source=DOMAIN,
-            #     statistic_id=entity_id,
-            #     unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-            # )
+            # Get the cumulative base BEFORE purging to maintain continuity
+            try:
+                from datetime import timedelta
 
-            # _LOGGER.info("Statistics metadata: %s", metadata)
-
-            # Use Home Assistant's configured timezone
-            ha_timezone = hass.config.time_zone
-            tz = zoneinfo.ZoneInfo(ha_timezone) if ha_timezone else timezone.utc
-
-            stats = []
-
-            # Handle overwrite logic BEFORE calculating statistics
-            cumulative_base = 0.0
-
-            # Determine if we should overwrite based on whether any date in range is current day
-            today = datetime.now(tz).date()
-            has_current_day = start_date <= today <= end_date
-            should_overwrite = overwrite_existing and not has_current_day
-
-            if has_current_day and overwrite_existing:
-                _LOGGER.warning(
-                    "Current day %s is in range %s to %s with overwrite_existing=true. Switching to append mode to preserve live sensor data.",
-                    today.isoformat(),
-                    start_date.isoformat(),
-                    end_date.isoformat(),
+                # Get statistics from just before the start date
+                # We want the cumulative value at the end of the day BEFORE start_date
+                end_of_previous_day = datetime.combine(
+                    start_date - timedelta(days=1), datetime.max.time()
                 )
+                end_of_previous_day = end_of_previous_day.replace(tzinfo=tz)
 
-            if should_overwrite:
-                _LOGGER.warning(
-                    "Overwrite enabled - clearing existing statistics for %s from %s to %s",
-                    entity_id,
-                    start_date,
-                    end_date,
-                )
+                # Query statistics up to end of previous day
+                from typing import Any, cast
 
-                # Get the cumulative base BEFORE purging to maintain continuity
+                # FIRST HOUR BOUNDARY FIX: Preserve existing cumulative baseline to prevent massive backwards jumps
+                # Instead of forcing HA alignment (which causes 5000+ kWh backwards jumps), preserve
+                # the existing statistical baseline from before our backfill period starts
+
                 try:
-                    from datetime import timedelta
-
-                    # Get statistics from just before the start date
-                    # We want the cumulative value at the end of the day BEFORE start_date
-                    end_of_previous_day = datetime.combine(
-                        start_date - timedelta(days=1), datetime.max.time()
-                    )
-                    end_of_previous_day = end_of_previous_day.replace(tzinfo=tz)
-
-                    # Query statistics up to end of previous day
-                    from typing import Any, cast
-
-                    # FIRST HOUR BOUNDARY FIX: Preserve existing cumulative baseline to prevent massive backwards jumps
-                    # Instead of forcing HA alignment (which causes 5000+ kWh backwards jumps), preserve
-                    # the existing statistical baseline from before our backfill period starts
-
-                    try:
-                        # Get the LAST statistic BEFORE our backfill start date to preserve existing baseline
-                        # This prevents massive backwards jumps at the first hour of backfill
-                        # We need to query database directly since get_last_statistics returns the most recent, not before a date
-                        from homeassistant.components.recorder.statistics import (
-                            get_last_statistics,
-                            statistics_during_period,
-                        )
-
-                        # Get all statistics up to the day before backfill start
-                        end_time = datetime.combine(
-                            start_date, time.min, tzinfo=tz
-                        ) - timedelta(seconds=1)
-                        start_time = end_time - timedelta(
-                            days=30
-                        )  # Look back 30 days max
-
-                        baseline_stats = await hass.async_add_executor_job(
-                            statistics_during_period,  # type: ignore[arg-type]
-                            hass,
-                            start_time,
-                            end_time,
-                            [entity_id],
-                            "hour",
-                            {"sum"},
-                            {"sum"},
-                        )
-
-                        if (
-                            baseline_stats
-                            and entity_id in baseline_stats
-                            and baseline_stats[entity_id]
-                        ):
-                            # Find the LAST statistic before our backfill start (latest timestamp)
-                            entity_stats = baseline_stats[entity_id]
-                            if entity_stats:
-                                last_baseline_stat = entity_stats[
-                                    -1
-                                ]  # Last entry is most recent
-                                if (
-                                    "sum" in last_baseline_stat
-                                    and last_baseline_stat["sum"] is not None
-                                ):
-                                    cumulative_base = float(last_baseline_stat["sum"])
-                                    baseline_time = last_baseline_stat.get(
-                                        "start", "unknown"
-                                    )
-                                    _LOGGER.warning(
-                                        "BASELINE PRESERVATION: Found existing baseline %.3f kWh at %s (before backfill start) - preserving to prevent backwards jumps",
-                                        cumulative_base,
-                                        baseline_time,
-                                    )
-                                else:
-                                    cumulative_base = 0.0
-                                    _LOGGER.warning(
-                                        "BASELINE PRESERVATION: Found baseline stat but no sum value, using cumulative_base=0.0"
-                                    )
-                            else:
-                                cumulative_base = 0.0
-                                _LOGGER.warning(
-                                    "BASELINE PRESERVATION: No baseline statistics found in period, using cumulative_base=0.0"
-                                )
-                        else:
-                            cumulative_base = 0.0
-                            _LOGGER.warning(
-                                "BASELINE PRESERVATION: No existing statistics found before backfill, using cumulative_base=0.0"
-                            )
-
-                    except Exception as e:
-                        _LOGGER.warning(
-                            "BASELINE PRESERVATION: Failed to get existing baseline: %s, using cumulative_base=0.0",
-                            e,
-                        )
-                        cumulative_base = 0.0
-
-                except Exception as e:
-                    _LOGGER.warning(
-                        "HA ALIGNMENT: Could not analyze cumulative base alignment for %s: %s, using 0.0",
-                        entity_id,
-                        e,
-                    )
-                    cumulative_base = 0.0
-
-                # Now purge the existing statistics
-                try:
-                    # Use Home Assistant's recorder.purge_entities service to clear statistics
-                    await hass.services.async_call(
-                        "recorder",
-                        "purge_entities",
-                        {
-                            "entity_id": [entity_id],
-                            "keep_days": 0,  # Remove all data
-                        },
-                    )
-                    _LOGGER.info(
-                        "Successfully cleared existing statistics for %s", entity_id
-                    )
-
-                except Exception as e:
-                    _LOGGER.error(
-                        "Failed to clear existing statistics for %s: %s", entity_id, e
-                    )
-                    return
-            else:
-                # Get the last cumulative value before start_date to maintain continuity
-                try:
-                    # Query the last statistic before our start date
-                    from datetime import timedelta
-                    from typing import Any, cast
-
+                    # Get the LAST statistic BEFORE our backfill start date to preserve existing baseline
+                    # This prevents massive backwards jumps at the first hour of backfill
+                    # We need to query database directly since get_last_statistics returns the most recent, not before a date
                     from homeassistant.components.recorder.statistics import (
                         get_last_statistics,
                         statistics_during_period,
@@ -449,384 +362,466 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                                 baseline_time = last_baseline_stat.get(
                                     "start", "unknown"
                                 )
-                                _LOGGER.info(
-                                    "APPEND MODE: Found existing cumulative base: %.3f kWh at %s (before backfill start)",
+                                _LOGGER.warning(
+                                    "BASELINE PRESERVATION: Found existing baseline %.3f kWh at %s (before backfill start) - preserving to prevent backwards jumps",
                                     cumulative_base,
                                     baseline_time,
                                 )
                             else:
                                 cumulative_base = 0.0
                                 _LOGGER.warning(
-                                    "APPEND MODE: Found baseline stat but no sum value, using cumulative_base=0.0"
+                                    "BASELINE PRESERVATION: Found baseline stat but no sum value, using cumulative_base=0.0"
                                 )
                         else:
                             cumulative_base = 0.0
                             _LOGGER.warning(
-                                "APPEND MODE: No baseline statistics found in period, using cumulative_base=0.0"
+                                "BASELINE PRESERVATION: No baseline statistics found in period, using cumulative_base=0.0"
                             )
+                    else:
+                        cumulative_base = 0.0
+                        _LOGGER.warning(
+                            "BASELINE PRESERVATION: No existing statistics found before backfill, using cumulative_base=0.0"
+                        )
 
                 except Exception as e:
                     _LOGGER.warning(
-                        "Could not get existing cumulative base for %s, starting from 0: %s",
-                        entity_id,
+                        "BASELINE PRESERVATION: Failed to get existing baseline: %s, using cumulative_base=0.0",
                         e,
                     )
                     cumulative_base = 0.0
 
-            current_date: date = start_date
-            while current_date <= end_date:
-                _LOGGER.warning("=== PROCESSING DAY %s ===", current_date)
+            except Exception as e:
                 _LOGGER.warning(
-                    "Starting cumulative_base for %s: %.3f kWh",
-                    current_date,
-                    cumulative_base,
+                    "HA ALIGNMENT: Could not analyze cumulative base alignment for %s: %s, using 0.0",
+                    entity_id,
+                    e,
                 )
+                cumulative_base = 0.0
 
-                # CRITICAL FIX: For current day, only backfill up to current hour
-                # This prevents writing future hour statistics that block live data
-                current_datetime = datetime.now(tz)
-                is_current_day = current_date == today
-
-                # Get realistic hourly energy data instead of artificially splitting daily total
-                hourly_values = await hass.async_add_executor_job(
-                    client.get_hourly_kwh,
-                    influx_field,
-                    current_date,
-                    series_source,
-                    ha_timezone or "UTC",
-                )
-
-                _LOGGER.info(
-                    "Retrieved %d hourly values for %s: %s",
-                    len(hourly_values),
-                    current_date,
-                    [f"h{i}={v:.3f}" for i, v in enumerate(hourly_values) if v > 0][
-                        :5
-                    ],  # Show first 5 non-zero hours
+            # Now purge the existing statistics
+            try:
+                # Use Home Assistant's recorder.purge_entities service to clear statistics
+                await hass.services.async_call(
+                    "recorder",
+                    "purge_entities",
+                    {
+                        "entity_id": [entity_id],
+                        "keep_days": 0,  # Remove all data
+                    },
                 )
                 _LOGGER.info(
-                    "Using timezone %s for statistics timestamps (current date: %s)",
-                    ha_timezone or "UTC",
-                    current_date,
+                    "Successfully cleared existing statistics for %s", entity_id
                 )
 
-                daily_total = sum(hourly_values)
-                if daily_total > 0:
-                    _LOGGER.info(
-                        "DEBUG: Processing %s with total %.3f kWh across %d hours",
+            except Exception as e:
+                _LOGGER.error(
+                    "Failed to clear existing statistics for %s: %s", entity_id, e
+                )
+                return
+        else:
+            # Get the last cumulative value before start_date to maintain continuity
+            try:
+                # Query the last statistic before our start date
+                from datetime import timedelta
+                from typing import Any, cast
+
+                from homeassistant.components.recorder.statistics import (
+                    get_last_statistics,
+                    statistics_during_period,
+                )
+
+                # Get all statistics up to the day before backfill start
+                end_time = datetime.combine(
+                    start_date, time.min, tzinfo=tz
+                ) - timedelta(seconds=1)
+                start_time = end_time - timedelta(days=30)  # Look back 30 days max
+
+                baseline_stats = await hass.async_add_executor_job(
+                    statistics_during_period,  # type: ignore[arg-type]
+                    hass,
+                    start_time,
+                    end_time,
+                    [entity_id],
+                    "hour",
+                    {"sum"},
+                    {"sum"},
+                )
+
+                if (
+                    baseline_stats
+                    and entity_id in baseline_stats
+                    and baseline_stats[entity_id]
+                ):
+                    # Find the LAST statistic before our backfill start (latest timestamp)
+                    entity_stats = baseline_stats[entity_id]
+                    if entity_stats:
+                        last_baseline_stat = entity_stats[
+                            -1
+                        ]  # Last entry is most recent
+                        if (
+                            "sum" in last_baseline_stat
+                            and last_baseline_stat["sum"] is not None
+                        ):
+                            cumulative_base = float(last_baseline_stat["sum"])
+                            baseline_time = last_baseline_stat.get("start", "unknown")
+                            _LOGGER.info(
+                                "APPEND MODE: Found existing cumulative base: %.3f kWh at %s (before backfill start)",
+                                cumulative_base,
+                                baseline_time,
+                            )
+                        else:
+                            cumulative_base = 0.0
+                            _LOGGER.warning(
+                                "APPEND MODE: Found baseline stat but no sum value, using cumulative_base=0.0"
+                            )
+                    else:
+                        cumulative_base = 0.0
+                        _LOGGER.warning(
+                            "APPEND MODE: No baseline statistics found in period, using cumulative_base=0.0"
+                        )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    "Could not get existing cumulative base for %s, starting from 0: %s",
+                    entity_id,
+                    e,
+                )
+                cumulative_base = 0.0
+
+        current_date: date = start_date
+        while current_date <= end_date:
+            _LOGGER.warning("=== PROCESSING DAY %s ===", current_date)
+            _LOGGER.warning(
+                "Starting cumulative_base for %s: %.3f kWh",
+                current_date,
+                cumulative_base,
+            )
+
+            # CRITICAL FIX: For current day, only backfill up to current hour
+            # This prevents writing future hour statistics that block live data
+            current_datetime = datetime.now(tz)
+            is_current_day = current_date == today
+
+            # Get realistic hourly energy data instead of artificially splitting daily total
+            hourly_values = await hass.async_add_executor_job(
+                client.get_hourly_kwh,
+                influx_field,
+                current_date,
+                series_source,
+                ha_timezone or "UTC",
+            )
+
+            _LOGGER.info(
+                "Retrieved %d hourly values for %s: %s",
+                len(hourly_values),
+                current_date,
+                [f"h{i}={v:.3f}" for i, v in enumerate(hourly_values) if v > 0][
+                    :5
+                ],  # Show first 5 non-zero hours
+            )
+            _LOGGER.info(
+                "Using timezone %s for statistics timestamps (current date: %s)",
+                ha_timezone or "UTC",
+                current_date,
+            )
+
+            daily_total = sum(hourly_values)
+            if daily_total > 0:
+                _LOGGER.info(
+                    "DEBUG: Processing %s with total %.3f kWh across %d hours",
+                    current_date,
+                    daily_total,
+                    len([h for h in hourly_values if h > 0]),
+                )
+
+                # Build cumulative statistics from actual hourly data
+                cumulative_progress = 0.0
+
+                # CRITICAL FIX: For current day, limit to completed hours only to prevent blocking live data
+                # Phase 2: Support hour range for auto-repair
+                if start_hour is not None and end_hour is not None:
+                    # Auto-repair mode: process specific hour range
+                    hour_start = start_hour
+                    hour_end = end_hour
+                    _LOGGER.warning(
+                        "AUTO-REPAIR MODE: Processing specific hour range %d-%d on %s",
+                        hour_start,
+                        hour_end,
                         current_date,
-                        daily_total,
-                        len([h for h in hourly_values if h > 0]),
                     )
-
-                    # Build cumulative statistics from actual hourly data
-                    cumulative_progress = 0.0
-
-                    # CRITICAL FIX: Stop at last complete hour to avoid partial hour collisions
+                else:
+                    # Normal mode: process full day or current day limitations
+                    hour_start = 0
                     max_hour = 24
                     if is_current_day:
                         current_hour = current_datetime.hour
-                        # Stop at last complete hour - live sensors handle current partial hour
-                        max_hour = current_hour  # Backfill complete hours only (0 to current_hour-1)
-                        _LOGGER.info(
-                            "Current day %s: backfilling complete hours 0-%d (current time: %s, live sensors handle partial hour %d)",
+                        # Only backfill COMPLETED hours - current hour is still in progress
+                        # E.g., at 15:30, backfill hours 0-14 (15 hours), current hour 15 is still running
+                        max_hour = current_hour  # range(current_hour) gives 0 to current_hour-1
+                        _LOGGER.warning(
+                            "Current day %s: limiting backfill to completed hours 0-%d (current time: %s, current hour %d still in progress)",
                             current_date,
-                            current_hour - 1 if current_hour > 0 else 0,
+                            max_hour - 1 if max_hour > 0 else 0,
                             current_datetime.strftime("%H:%M"),
                             current_hour,
                         )
+                    hour_end = max_hour
 
-                    for hour in range(max_hour):
-                        hourly_energy = hourly_values[hour]
-                        cumulative_progress += hourly_energy
+                for hour in range(hour_start, hour_end):
+                    hourly_energy = hourly_values[hour]
+                    cumulative_progress += hourly_energy
 
-                        stat_start = datetime(
-                            current_date.year,
-                            current_date.month,
-                            current_date.day,
-                            hour,
-                            0,  # Minutes must be 0 for HA statistics
-                            0,  # Seconds must be 0 for HA statistics
-                            tzinfo=tz,
-                        )
-
-                        # Calculate cumulative total at this hour
-                        cumulative_at_hour = cumulative_base + cumulative_progress
-
-                        # CRITICAL FIX: Add STATE field to coordinate with HA's TOTAL_INCREASING calculation
-                        # For daily sensors, state represents the sensor reading (cumulative since midnight)
-                        # This aligns our statistics with how live sensors report their state
-                        sensor_state = cumulative_progress  # Daily total since midnight (not lifetime cumulative)
-
-                        # For TOTAL_INCREASING sensors, sum should always be cumulative
-                        # regardless of sensor naming - HA handles daily calculations automatically
-                        stats.append(
-                            {
-                                "start": stat_start,
-                                "sum": cumulative_at_hour,  # Always cumulative for TOTAL_INCREASING
-                                "state": sensor_state,  # Coordinates with live sensor state
-                            }
-                        )
-
-                        # Debug logging for first day and first few hours, plus any hour with significant energy
-                        if current_date == start_date and hour < 6:
-                            _LOGGER.info(
-                                "DEBUG: Hour %d - timestamp: %s, hourly: %.3f kWh, cumulative: %.3f kWh",
-                                hour,
-                                stat_start.isoformat(),
-                                hourly_energy,
-                                cumulative_at_hour,
-                            )
-
-                    # Update cumulative base for next day
-                    old_cumulative_base = cumulative_base
-                    cumulative_base += daily_total
-                    _LOGGER.info(
-                        "End of day %s: daily_total=%.3f, old_base=%.3f, new_base=%.3f",
-                        current_date,
-                        daily_total,
-                        old_cumulative_base,
-                        cumulative_base,
-                    )
-                current_date += timedelta(days=1)
-
-            if stats:
-                _LOGGER.info("Importing %d statistics for %s", len(stats), entity_id)
-                _LOGGER.info("Sample stat: %s", stats[0] if stats else "None")
-
-                # SMART BOUNDARY SYNC: Detect and fix discontinuities without causing cumulative base inflation
-                try:
-                    from homeassistant.components.recorder.statistics import (
-                        get_last_statistics,
+                    stat_start = datetime(
+                        current_date.year,
+                        current_date.month,
+                        current_date.day,
+                        hour,
+                        0,  # Minutes must be 0 for HA statistics
+                        0,  # Seconds must be 0 for HA statistics
+                        tzinfo=tz,
                     )
 
-                    # Get the final backfilled statistic
-                    final_backfilled_stat = stats[-1] if stats else None
-                    if final_backfilled_stat and isinstance(
-                        final_backfilled_stat["start"], datetime
-                    ):
-                        final_start = final_backfilled_stat["start"]
-                        final_sum = final_backfilled_stat["sum"]
+                    # Calculate cumulative total at this hour
+                    cumulative_at_hour = cumulative_base + cumulative_progress
 
+                    # CRITICAL FIX: Add STATE field to coordinate with HA's TOTAL_INCREASING calculation
+                    # For daily sensors, state represents the sensor reading (cumulative since midnight)
+                    # This aligns our statistics with how live sensors report their state
+                    sensor_state = cumulative_progress  # Daily total since midnight (not lifetime cumulative)
+
+                    stats.append(
+                        {
+                            "start": stat_start,
+                            "sum": cumulative_at_hour,
+                            "state": sensor_state,  # MISSING FIELD ADDED - coordinates with live sensor state
+                        }
+                    )
+
+                    # Debug logging for first day and first few hours, plus any hour with significant energy
+                    if current_date == start_date and hour < 6:
                         _LOGGER.info(
-                            "SMART BOUNDARY SYNC: Final backfilled sum is %.3f kWh at %s",
-                            final_sum,
-                            final_start.isoformat(),
+                            "DEBUG: Hour %d - timestamp: %s, hourly: %.3f kWh, cumulative: %.3f kWh",
+                            hour,
+                            stat_start.isoformat(),
+                            hourly_energy,
+                            cumulative_at_hour,
                         )
 
-                        # Check if there are existing live statistics AFTER our backfill end
-                        next_hour_start = final_start + timedelta(hours=1)
+                # Update cumulative base for next day
+                old_cumulative_base = cumulative_base
+                cumulative_base += daily_total
+                _LOGGER.info(
+                    "End of day %s: daily_total=%.3f, old_base=%.3f, new_base=%.3f",
+                    current_date,
+                    daily_total,
+                    old_cumulative_base,
+                    cumulative_base,
+                )
+            current_date += timedelta(days=1)
 
-                        # Query for live statistics that come after our backfilled data
-                        future_stats = await hass.async_add_executor_job(
-                            cast(Any, get_last_statistics),
-                            hass,
-                            10,  # Get multiple statistics to find the right one
-                            entity_id,
-                            True,  # Convert units
-                            {"sum"},  # Only need sum
-                        )
+        if stats:
+            _LOGGER.info("Importing %d statistics for %s", len(stats), entity_id)
+            _LOGGER.info("Sample stat: %s", stats[0] if stats else "None")
 
-                        if future_stats and entity_id in future_stats:
-                            entity_stats = future_stats[entity_id]
-                            if entity_stats and len(entity_stats) > 0:
-                                # Find the first live statistic AFTER our backfill end
-                                next_live_stat = None
-                                for stat in entity_stats:
-                                    if "start" in stat and stat["start"]:
-                                        stat_time_str = stat["start"]
-                                        if isinstance(stat_time_str, str):
-                                            stat_time = datetime.fromisoformat(
-                                                stat_time_str.replace("Z", "+00:00")
-                                            )
-                                        else:
-                                            stat_time = stat_time_str
+            # SMART BOUNDARY SYNC: Detect and fix discontinuities without causing cumulative base inflation
+            try:
+                from homeassistant.components.recorder.statistics import (
+                    get_last_statistics,
+                )
 
-                                        if (
-                                            isinstance(stat_time, datetime)
-                                            and stat_time >= next_hour_start
-                                        ):
-                                            next_live_stat = stat
-                                            break
+                # Get the final backfilled statistic
+                final_backfilled_stat = stats[-1] if stats else None
+                if final_backfilled_stat and isinstance(
+                    final_backfilled_stat["start"], datetime
+                ):
+                    final_start = final_backfilled_stat["start"]
+                    final_sum = final_backfilled_stat["sum"]
 
-                                if (
-                                    next_live_stat
-                                    and "sum" in next_live_stat
-                                    and next_live_stat["sum"] is not None
-                                ):
-                                    live_sum = float(next_live_stat["sum"])
-                                    final_sum_value = (
-                                        float(final_sum)  # type: ignore[arg-type]
-                                        if final_sum is not None
-                                        else 0.0
-                                    )
-                                    discontinuity = final_sum_value - live_sum
+                    _LOGGER.info(
+                        "SMART BOUNDARY SYNC: Final backfilled sum is %.3f kWh at %s",
+                        final_sum,
+                        final_start.isoformat(),
+                    )
 
-                                    if (
-                                        abs(discontinuity) > 5.0
-                                    ):  # More than 5 kWh discontinuity
-                                        _LOGGER.warning(
-                                            "SMART BOUNDARY SYNC: Detected %.3f kWh discontinuity between final backfilled (%.3f) and first live (%.3f) at %s",
-                                            discontinuity,
-                                            final_sum,
-                                            live_sum,
-                                            next_live_stat.get("start", "unknown"),
-                                        )
+                    # Check if there are existing live statistics AFTER our backfill end
+                    next_hour_start = final_start + timedelta(hours=1)
 
-                                        # Apply SMART adjustment - reduce ALL backfilled stats by the discontinuity
-                                        # This preserves relative progression while aligning the final value
-                                        for stat in stats:
-                                            current_sum = (
-                                                float(stat["sum"])  # type: ignore[arg-type]
-                                                if stat["sum"] is not None
-                                                else 0.0
-                                            )
-                                            stat["sum"] = max(
-                                                0.0, current_sum - discontinuity
-                                            )
+                    # Query for live statistics that come after our backfilled data
+                    future_stats = await hass.async_add_executor_job(
+                        cast(Any, get_last_statistics),
+                        hass,
+                        10,  # Get multiple statistics to find the right one
+                        entity_id,
+                        True,  # Convert units
+                        {"sum"},  # Only need sum
+                    )
 
-                                        _LOGGER.warning(
-                                            "SMART BOUNDARY SYNC: Applied %.3f kWh downward adjustment to align with live data. Final sum: %.3f → %.3f kWh",
-                                            discontinuity,
-                                            final_sum_value,
-                                            final_sum_value - discontinuity,
+                    if future_stats and entity_id in future_stats:
+                        entity_stats = future_stats[entity_id]
+                        if entity_stats and len(entity_stats) > 0:
+                            # Find the first live statistic AFTER our backfill end
+                            next_live_stat = None
+                            for stat in entity_stats:
+                                if "start" in stat and stat["start"]:
+                                    stat_time_str = stat["start"]
+                                    if isinstance(stat_time_str, str):
+                                        stat_time = datetime.fromisoformat(
+                                            stat_time_str.replace("Z", "+00:00")
                                         )
                                     else:
-                                        _LOGGER.info(
-                                            "SMART BOUNDARY SYNC: No significant discontinuity detected (%.3f kWh)",
-                                            discontinuity,
+                                        stat_time = stat_time_str
+
+                                    if (
+                                        isinstance(stat_time, datetime)
+                                        and stat_time >= next_hour_start
+                                    ):
+                                        next_live_stat = stat
+                                        break
+
+                            if (
+                                next_live_stat
+                                and "sum" in next_live_stat
+                                and next_live_stat["sum"] is not None
+                            ):
+                                live_sum = float(next_live_stat["sum"])
+                                final_sum_value = (
+                                    float(final_sum)  # type: ignore[arg-type]
+                                    if final_sum is not None
+                                    else 0.0
+                                )
+                                discontinuity = final_sum_value - live_sum
+
+                                if (
+                                    abs(discontinuity) > 5.0
+                                ):  # More than 5 kWh discontinuity
+                                    _LOGGER.warning(
+                                        "SMART BOUNDARY SYNC: Detected %.3f kWh discontinuity between final backfilled (%.3f) and first live (%.3f) at %s",
+                                        discontinuity,
+                                        final_sum,
+                                        live_sum,
+                                        next_live_stat.get("start", "unknown"),
+                                    )
+
+                                    # Apply SMART adjustment - reduce ALL backfilled stats by the discontinuity
+                                    # This preserves relative progression while aligning the final value
+                                    for stat in stats:
+                                        current_sum = (
+                                            float(stat["sum"])  # type: ignore[arg-type]
+                                            if stat["sum"] is not None
+                                            else 0.0
                                         )
+                                        stat["sum"] = max(
+                                            0.0, current_sum - discontinuity
+                                        )
+
+                                    _LOGGER.warning(
+                                        "SMART BOUNDARY SYNC: Applied %.3f kWh downward adjustment to align with live data. Final sum: %.3f → %.3f kWh",
+                                        discontinuity,
+                                        final_sum_value,
+                                        final_sum_value - discontinuity,
+                                    )
                                 else:
                                     _LOGGER.info(
-                                        "SMART BOUNDARY SYNC: No live statistics found after backfill end"
+                                        "SMART BOUNDARY SYNC: No significant discontinuity detected (%.3f kWh)",
+                                        discontinuity,
                                     )
                             else:
                                 _LOGGER.info(
-                                    "SMART BOUNDARY SYNC: No future statistics available"
+                                    "SMART BOUNDARY SYNC: No live statistics found after backfill end"
                                 )
                         else:
                             _LOGGER.info(
-                                "SMART BOUNDARY SYNC: No statistics found for boundary check"
+                                "SMART BOUNDARY SYNC: No future statistics available"
+                            )
+                    else:
+                        _LOGGER.info(
+                            "SMART BOUNDARY SYNC: No statistics found for boundary check"
+                        )
+
+            except Exception as e:
+                _LOGGER.warning(
+                    "SMART BOUNDARY SYNC: Could not perform boundary synchronization check: %s",
+                    e,
+                )
+
+            # Check if Spook's recorder.import_statistics service is available
+            if not hass.services.has_service("recorder", "import_statistics"):
+                _LOGGER.error(
+                    "Backfill requires Spook integration for recorder.import_statistics service. "
+                    "Install Spook from https://github.com/frenck/spook or HACS. "
+                    "The built-in HA statistics API cannot import data for entities with state_class set."
+                )
+                continue
+
+            # Overwrite logic has been moved to before statistics calculation
+
+            # Process in batches to avoid exceeding HA's 32KB service call limit
+            batch_size = 100  # Process 100 statistics entries at a time
+            total_imported = 0
+
+            for i in range(0, len(stats), batch_size):
+                batch = stats[i : i + batch_size]
+                try:
+                    service_data = {
+                        "statistic_id": entity_id,
+                        "source": "recorder",
+                        "has_mean": False,
+                        "has_sum": True,
+                        "unit_of_measurement": "kWh",
+                        "name": entity_entry.name or entity_entry.original_name,
+                        "stats": batch,
+                    }
+                    # Debug: log first few entries of first batch
+                    if i == 0 and len(batch) > 0:
+                        _LOGGER.info(
+                            "DEBUG: First batch sample for %s - First 3 entries:",
+                            entity_id,
+                        )
+                        for j, stat_dict in enumerate(batch[:3]):
+                            # stat_dict is a dict with statistics data
+                            start_time = stat_dict["start"]  # type: ignore[assignment]
+                            sum_value = (
+                                float(stat_dict["sum"])  # type: ignore[arg-type]
+                                if stat_dict["sum"] is not None
+                                else 0.0
+                            )
+                            _LOGGER.info(
+                                "  Entry %d: start=%s, sum=%.3f",
+                                j + 1,
+                                start_time.isoformat()
+                                if hasattr(start_time, "isoformat")
+                                else start_time,
+                                sum_value,
                             )
 
+                    await hass.services.async_call(
+                        "recorder", "import_statistics", service_data
+                    )
+                    total_imported += len(batch)
+                    _LOGGER.info(
+                        "Imported batch %d-%d (%d entries) for %s",
+                        i + 1,
+                        i + len(batch),
+                        len(batch),
+                        entity_id,
+                    )
                 except Exception as e:
-                    _LOGGER.warning(
-                        "SMART BOUNDARY SYNC: Could not perform boundary synchronization check: %s",
+                    _LOGGER.error(
+                        "Failed to import batch %d-%d for %s: %s",
+                        i + 1,
+                        i + len(batch),
+                        entity_id,
                         e,
                     )
+                    _LOGGER.error("Batch sample: %s", batch[0] if batch else "None")
 
-                # Check if Spook's recorder.import_statistics service is available
-                if not hass.services.has_service("recorder", "import_statistics"):
-                    _LOGGER.error(
-                        "Backfill requires Spook integration for recorder.import_statistics service. "
-                        "Install Spook from https://github.com/frenck/spook or HACS. "
-                        "The built-in HA statistics API cannot import data for entities with state_class set."
-                    )
-                    continue
-
-                # Overwrite logic has been moved to before statistics calculation
-
-                # Process in batches to avoid exceeding HA's 32KB service call limit
-                batch_size = 100  # Process 100 statistics entries at a time
-                total_imported = 0
-
-                for i in range(0, len(stats), batch_size):
-                    batch = stats[i : i + batch_size]
-                    try:
-                        service_data = {
-                            "statistic_id": entity_id,
-                            "source": "recorder",
-                            "has_mean": False,
-                            "has_sum": True,
-                            "unit_of_measurement": "kWh",
-                            "name": entity_entry.name or entity_entry.original_name,
-                            "stats": batch,
-                        }
-                        # Debug: log first few entries of first batch
-                        if i == 0 and len(batch) > 0:
-                            _LOGGER.info(
-                                "DEBUG: First batch sample for %s - First 3 entries:",
-                                entity_id,
-                            )
-                            for j, stat_dict in enumerate(batch[:3]):
-                                # stat_dict is a dict with statistics data
-                                start_time = stat_dict["start"]  # type: ignore[assignment]
-                                sum_value = (
-                                    float(stat_dict["sum"])  # type: ignore[arg-type]
-                                    if stat_dict["sum"] is not None
-                                    else 0.0
-                                )
-                                _LOGGER.info(
-                                    "  Entry %d: start=%s, sum=%.3f",
-                                    j + 1,
-                                    start_time.isoformat()
-                                    if hasattr(start_time, "isoformat")
-                                    else start_time,
-                                    sum_value,
-                                )
-
-                        await hass.services.async_call(
-                            "recorder", "import_statistics", service_data
-                        )
-                        total_imported += len(batch)
-                        _LOGGER.info(
-                            "Imported batch %d-%d (%d entries) for %s",
-                            i + 1,
-                            i + len(batch),
-                            len(batch),
-                            entity_id,
-                        )
-                    except Exception as e:
-                        _LOGGER.error(
-                            "Failed to import batch %d-%d for %s: %s",
-                            i + 1,
-                            i + len(batch),
-                            entity_id,
-                            e,
-                        )
-                        _LOGGER.error("Batch sample: %s", batch[0] if batch else "None")
-
-                _LOGGER.info(
-                    "Successfully imported %d total statistics via Spook for %s",
-                    total_imported,
-                    entity_id,
-                )
-            else:
-                _LOGGER.info("No new statistics to import for %s", entity_id)
-
-    finally:
-        _LOGGER.info("Backfill operation completed")
-
-
-async def async_handle_backfill_to_now(call: ServiceCall):
-    """Handle the pause-and-complete backfill service - from date to current time."""
-    start_str = call.data.get("start")
-
-    if not start_str:
-        _LOGGER.error("backfill_from_date_to_now requires 'start' parameter")
-        return
-
-    try:
-        datetime.strptime(start_str, "%Y-%m-%d").date()  # Validate date format
-        end_date = datetime.now().date()
-    except ValueError as e:
-        _LOGGER.error("Invalid date format for start: %s", e)
-        return
-
-    # Use same logic as main backfill but with end_date = today
-    await async_handle_backfill(
-        ServiceCall(
-            domain=call.domain,
-            service=call.service,
-            data={
-                **call.data,
-                "end": end_date.strftime("%Y-%m-%d"),
-                "overwrite_existing": False,  # Always use append mode for safety
-            },
-            context=call.context,
-            hass=call.hass,
-        )
-    )
+            _LOGGER.info(
+                "Successfully imported %d total statistics via Spook for %s",
+                total_imported,
+                entity_id,
+            )
+        else:
+            _LOGGER.info("No new statistics to import for %s", entity_id)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -859,16 +854,14 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
     dry_run = call.data.get("dry_run", False)
     overwrite_existing = call.data.get("overwrite_existing", False)
     merge_strategy = call.data.get("merge_strategy", "prioritize_influx")
-    auto_backfill = call.data.get("auto_backfill", True)
 
     _LOGGER.info(
-        "Migration parameters - auto_discover: %s, entity_prefix: %s, sensor_prefix: %s, dry_run: %s, merge_strategy: %s, auto_backfill: %s",
+        "Migration parameters - auto_discover: %s, entity_prefix: %s, sensor_prefix: %s, dry_run: %s, merge_strategy: %s",
         auto_discover,
         entity_prefix,
         sensor_prefix,
         dry_run,
         merge_strategy,
-        auto_backfill,
     )
 
     # Check if Spook's recorder.import_statistics service is available
@@ -1063,23 +1056,6 @@ async def async_handle_teslemetry_migration(call: ServiceCall):  # noqa: C901
                 "MIGRATION COMPLETE: Successfully migrated %d total statistics entries",
                 total_migrated,
             )
-
-        # Auto-trigger backfill if enabled and migration was successful
-        if auto_backfill and total_migrated > 0 and not dry_run:
-            _LOGGER.info("=== AUTO-BACKFILL PHASE STARTING ===")
-            _LOGGER.info(
-                "Triggering backfill to overwrite migrated data with higher-quality InfluxDB data where available"
-            )
-            
-            try:
-                await _trigger_auto_backfill(
-                    hass, target_entry, sensor_prefix, overwrite_existing
-                )
-            except Exception as e:
-                _LOGGER.error(
-                    "Auto-backfill failed, but migration was successful: %s", e
-                )
-                # Don't re-raise - migration succeeded even if backfill failed
 
     except Exception as e:
         _LOGGER.error("Migration service failed: %s", e)
@@ -1596,101 +1572,6 @@ async def _import_statistics_via_spook(
     _LOGGER.debug(
         "Imported %d total statistics entries for %s", total_imported, entity_id
     )
-
-
-async def _trigger_auto_backfill(
-    hass: HomeAssistant,
-    target_entry: ConfigEntry,
-    sensor_prefix: str | None,
-    overwrite_existing: bool,
-) -> None:
-    """Trigger automatic backfill after Teslemetry migration to overwrite with InfluxDB data."""
-    try:
-        # Get the InfluxDB client from the target entry
-        if target_entry.entry_id not in hass.data.get(DOMAIN, {}):
-            _LOGGER.warning(
-                "Target integration entry %s not found in domain data, cannot trigger auto-backfill",
-                target_entry.entry_id,
-            )
-            return
-
-        store = hass.data[DOMAIN][target_entry.entry_id]
-        client: InfluxClient = store.get("client")
-        if not client:
-            _LOGGER.warning(
-                "InfluxDB client not found for entry %s, cannot trigger auto-backfill",
-                target_entry.entry_id,
-            )
-            return
-
-        # Check if InfluxDB has any data at all
-        try:
-            # Use get_first_timestamp to find earliest available InfluxDB data
-            first_timestamp = await hass.async_add_executor_job(
-                client.get_first_timestamp
-            )
-            if not first_timestamp:
-                _LOGGER.info(
-                    "No InfluxDB data found, skipping auto-backfill (migration data will remain as-is)"
-                )
-                return
-
-            # Convert to date string for backfill service
-            from datetime import datetime
-            if isinstance(first_timestamp, str):
-                # Parse ISO string to datetime
-                first_dt = datetime.fromisoformat(first_timestamp.replace('Z', '+00:00'))
-            else:
-                first_dt = first_timestamp
-            
-            start_date_str = first_dt.strftime("%Y-%m-%d")
-            
-            _LOGGER.info(
-                "InfluxDB data available from %s, triggering backfill to overwrite migrated data",
-                start_date_str,
-            )
-
-            # Create service call data for backfill
-            backfill_data = {
-                "all": False,
-                "start": start_date_str,
-                "overwrite_existing": True,  # Always overwrite for auto-backfill
-            }
-            
-            # Add sensor_prefix if specified
-            if sensor_prefix:
-                backfill_data["sensor_prefix"] = sensor_prefix
-
-            # Create a service call object and trigger backfill
-            from homeassistant.core import ServiceCall
-            backfill_call = ServiceCall(
-                domain=DOMAIN,
-                service="backfill",
-                data=backfill_data,
-                context=None,
-                hass=hass,
-            )
-
-            _LOGGER.info(
-                "AUTO-BACKFILL: Calling backfill service with data: %s",
-                backfill_data,
-            )
-            
-            await async_handle_backfill(backfill_call)
-            
-            _LOGGER.info(
-                "=== AUTO-BACKFILL COMPLETE: InfluxDB data has overwritten migrated data where available ==="
-            )
-
-        except Exception as e:
-            _LOGGER.error(
-                "Failed to query InfluxDB for auto-backfill range detection: %s", e
-            )
-            raise
-
-    except Exception as e:
-        _LOGGER.error("Auto-backfill trigger failed: %s", e)
-        raise
 
 
 async def async_get_options_flow(entry: ConfigEntry) -> OptionsFlow:

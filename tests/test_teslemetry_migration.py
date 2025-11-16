@@ -368,6 +368,7 @@ async def test_import_statistics_via_spook():
     stats = service_data["stats"]
     assert len(stats) == 2
     assert stats[0]["start"] == "2024-01-01T00:00:00+00:00"
+    # sum should be included for reasonable values (Energy Dashboard needs it)
     assert stats[0]["sum"] == 15.5
     assert stats[0]["mean"] == 0.65
 

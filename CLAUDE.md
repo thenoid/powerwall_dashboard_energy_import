@@ -9,6 +9,8 @@ Key: do not assume; ask if unclear. Always provide structured, efficient, techni
 Integration: powerwall_dashboard_energy_import
 Repo: https://github.com/thenoid/powerwall_dashboard_energy_import
 
+Database Configuration For Testing is in: DB_CONFIG.md
+
 Goal:
 Import Tesla Powerwall + solar stats from InfluxDB 1.8.10 (populated by Powerwall Dashboard).
 Expose them as sensors compatible with Home Assistant Energy dashboard.

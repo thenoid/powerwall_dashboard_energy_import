@@ -1,7 +1,7 @@
 """Tests for boundary handoff between backfilled and live statistics."""
 
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from homeassistant.core import HomeAssistant, ServiceCall
@@ -62,8 +62,6 @@ class TestBoundaryHandoff:
         # Live sensors use: base_sum + current_sensor_state
         # But backfilled data ends with artificial sum
         pass
-
-
 
     def test_boundary_discontinuity_fix_verification(self):
         """Verify the boundary discontinuity fix prevents massive jumps."""
