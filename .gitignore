@@ -3,6 +3,7 @@ logs/
 .python-version
 .direnv
 DB_CONFIG.md
+.develop/
 boundary_investigation.txt
 boundary_debug_queries.sql
 ROOT_CAUSE_SUMMARY.md
