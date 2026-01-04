@@ -343,15 +343,16 @@ class PowerwallDashboardSensor(SensorEntity):
 
         if self._mode in ("kwh_total", "kwh_daily"):
             if day_mode == "local_midnight":
-                midnight_local = (
-                    datetime.now()
-                    .astimezone()
-                    .replace(hour=0, minute=0, second=0, microsecond=0)
-                )
-                since_iso = midnight_local.astimezone(timezone.utc).isoformat()
+                # CRITICAL FIX: For TOTAL_INCREASING sensors, report cumulative total from
+                # InfluxDB beginning, NOT daily total since midnight. This prevents HA's
+                # recorder from detecting false "meter resets" at midnight and falling back
+                # to ancient baselines. The state must always increase for TOTAL_INCREASING.
+                #
+                # HA's recorder automatically calculates hourly/daily/monthly differences
+                # from the cumulative state values for Energy Dashboard display.
                 q = (
                     f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
-                    f"WHERE time >= '{since_iso}' AND {self._field} > 0"
+                    f"WHERE {self._field} > 0"
                 )
                 pts = self._influx.query(q)
                 self._attr_native_value = (
@@ -380,15 +381,11 @@ class PowerwallDashboardSensor(SensorEntity):
                 return
 
         if self._mode == "kwh_monthly":
-            now_local = datetime.now().astimezone()
-            month_start_local = now_local.replace(
-                day=1, hour=0, minute=0, second=0, microsecond=0
-            )
-            since_iso = month_start_local.astimezone(timezone.utc).isoformat()
-
+            # CRITICAL FIX: For TOTAL_INCREASING sensors, report cumulative total from
+            # InfluxDB beginning, NOT monthly total since month start. Same fix as daily.
             if day_mode == "influx_daily_cq":
                 pts = self._influx.query(
-                    f"SELECT SUM({self._field}) AS value FROM daily.http WHERE time >= '{since_iso}'"
+                    f"SELECT SUM({self._field}) AS value FROM daily.http"
                 )
                 self._attr_native_value = (
                     round(pts[0].get("value", 0.0), 3) if pts else 0.0
@@ -397,7 +394,7 @@ class PowerwallDashboardSensor(SensorEntity):
 
             q = (
                 f"SELECT integral({self._field})/1000/3600 AS value FROM {series} "
-                f"WHERE time >= '{since_iso}' AND {self._field} > 0"
+                f"WHERE {self._field} > 0"
             )
             pts = self._influx.query(q)
             self._attr_native_value = round(pts[0].get("value", 0.0), 3) if pts else 0.0

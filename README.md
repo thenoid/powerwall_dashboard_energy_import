@@ -185,6 +185,104 @@ The repair script:
 **After Teslemetry migration:** Use if you see spikes after migrating
 **Normal operation:** Not needed - only for initial setup or one-time migrations
 
+## v0.13.0 Migration - Critical Fix for Midnight Spikes
+
+### What Changed in v0.13.0
+
+**CRITICAL BUG FIX**: Versions prior to 0.13.0 had a fundamental implementation error where `_daily` and `_monthly` sensors reported daily/monthly totals that reset at boundaries (0-120 kWh per day) instead of cumulative totals that always increase.
+
+**The Problem:**
+- Sensors were marked as `state_class: total_increasing` (telling Home Assistant they're cumulative meters)
+- But they actually reported daily totals like `state=115 kWh` at 11 PM, then `state=5 kWh` at midnight
+- Home Assistant's recorder detected this as a "meter reset" and fell back to ancient baselines (from May/November 2025)
+- This caused cascading spikes in the Energy Dashboard every midnight
+
+**The Fix:**
+- Sensors now report true cumulative totals from InfluxDB beginning (always increasing values)
+- Example: `state=11,957 kWh` at 11 PM, then `state=11,962 kWh` at midnight (+5 kWh)
+- Home Assistant's recorder automatically calculates hourly/daily/monthly differences for Energy Dashboard display
+- No more midnight spikes!
+
+### Migration Required
+
+**If you're upgrading from any version before 0.13.0, you MUST follow this procedure:**
+
+**Step 1: Stop Home Assistant**
+```bash
+sudo systemctl stop home-assistant
+```
+
+**Step 2: Backup Your Database**
+```bash
+mysqldump -u homeassistant -p ha_db > ha_backup_$(date +%Y%m%d).sql
+```
+
+**Step 3: Run Cleanup Script**
+This deletes all statistics for daily/monthly sensors (they'll be rebuilt from InfluxDB):
+```bash
+cd /path/to/powerwall_dashboard_energy_import
+./cleanup_and_backfill.sh
+```
+
+The script will:
+- Verify Home Assistant is stopped
+- Delete all statistics for `*_daily` sensors
+- Delete all statistics for `*_monthly` sensors
+- Delete both long-term and short-term statistics
+- Confirm successful cleanup
+
+**Step 4: Start Home Assistant**
+```bash
+sudo systemctl start home-assistant
+```
+
+Wait for Home Assistant to fully start (check logs: `journalctl -fu home-assistant`)
+
+**Step 5: Rebuild Statistics from InfluxDB**
+In Home Assistant Developer Tools → Services:
+```yaml
+service: powerwall_dashboard_energy_import.backfill
+data:
+  all: true
+  overwrite_existing: false
+```
+
+**Step 6: Monitor**
+- Watch the Energy Dashboard for 24+ hours
+- Midnight rollover should now be smooth (no spikes)
+- Sensor values should continuously increase (never reset)
+
+### Why This Approach Works
+
+Home Assistant's `TOTAL_INCREASING` sensors work like odometers:
+- ✅ **Correct**: State always increases (11,957 → 11,962 → 11,968 kWh)
+- ❌ **Wrong**: State resets periodically (115 → 5 → 23 kWh) ← old behavior
+
+Home Assistant's recorder compiles hourly statistics by calculating differences between consecutive states:
+```
+Hour 1: state_end=11,962, state_start=11,957 → sum_increase = 5 kWh
+Hour 2: state_end=11,968, state_start=11,962 → sum_increase = 6 kWh
+```
+
+The Energy Dashboard shows these hourly/daily/monthly differences, NOT the raw sensor states.
+
+### Troubleshooting
+
+**Q: I still see spikes after migration**
+- Verify you deleted BOTH `statistics` and `statistics_short_term` tables
+- Check that backfill completed successfully (no errors in logs)
+- Ensure you're running v0.13.0 (check `manifest.json`)
+
+**Q: My sensor values look huge now**
+- This is correct! They're cumulative totals from InfluxDB beginning
+- Example: `sensor.powerwall_home_usage_daily` might show 11,957 kWh
+- Energy Dashboard will still show daily usage (e.g., 23 kWh today)
+
+**Q: Can I skip the migration if I don't have spikes?**
+- No - the bug affects ALL versions before 0.13.0
+- Spikes may appear during future HA updates or database operations
+- Migration ensures long-term stability
+
 ## Teslemetry Migration
 Migrate historical energy statistics from Teslemetry to preserve your Energy Dashboard data:
 

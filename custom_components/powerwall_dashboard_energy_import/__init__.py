@@ -538,13 +538,13 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 cumulative_progress = 0.0
 
                 # CRITICAL FIX: For current day, limit to completed hours only to prevent blocking live data
-                # Phase 2: Support hour range for auto-repair
+                # Support hour range for manual surgical backfills (e.g., fixing specific hours after issues)
                 if start_hour is not None and end_hour is not None:
-                    # Auto-repair mode: process specific hour range
+                    # Surgical backfill mode: process specific hour range
                     hour_start = start_hour
                     hour_end = end_hour
                     _LOGGER.warning(
-                        "AUTO-REPAIR MODE: Processing specific hour range %d-%d on %s",
+                        "SURGICAL BACKFILL: Processing specific hour range %d-%d on %s",
                         hour_start,
                         hour_end,
                         current_date,

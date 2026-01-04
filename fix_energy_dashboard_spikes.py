@@ -174,29 +174,14 @@ class EnergyDashboardSpikeFixer:
         # This is for TOTAL_INCREASING sensors which maintain cumulative totals since start
         end_iso = end_datetime.strftime('%Y-%m-%dT%H:%M:%SZ')
 
-        # Special handling for home usage (calculated field)
-        if field == 'home':
-            query = f"""
-                SELECT integral(from_grid)/1000/3600 + integral(from_pw)/1000/3600 + integral(solar)/1000/3600
-                     - integral(to_grid)/1000/3600 - integral(to_pw)/1000/3600 as cumulative_home
-                FROM http
-                WHERE time < '{end_iso}'
-                AND (from_grid > 0 OR from_pw > 0 OR solar > 0 OR to_grid > 0 OR to_pw > 0)
-            """
-        elif field == 'solar':
-            query = f"""
-                SELECT integral(solar)/1000/3600 as cumulative_value
-                FROM http
-                WHERE time < '{end_iso}'
-                AND solar > 0
-            """
-        else:
-            query = f"""
-                SELECT integral({field})/1000/3600 as cumulative_value
-                FROM http
-                WHERE time < '{end_iso}'
-                AND {field} > 0
-            """
+        # Query fields directly, just like the sensor does (sensor.py:354-400)
+        # CRITICAL: Must use autogen.http retention policy to match sensor behavior
+        query = f"""
+            SELECT integral({field})/1000/3600 as cumulative_value
+            FROM autogen.http
+            WHERE time < '{end_iso}'
+            AND {field} > 0
+        """
 
         try:
             url = f"http://{self.influx_config['host']}:{self.influx_config['port']}/query"
@@ -285,6 +270,115 @@ class EnergyDashboardSpikeFixer:
         except Exception as e:
             logger.error(f"Error querying InfluxDB for {sensor_type} hourly increase: {e}")
             return 0.0
+
+    def recalculate_all_statistics(self, start_date: str, end_date: str) -> bool:
+        """Recalculate ALL statistics for a date range to fix HA recorder confusion.
+
+        This rebuilds a consistent statistics chain by recalculating every sum value
+        from InfluxDB beginning, eliminating any ancient baseline fallbacks that
+        cause cascading spikes.
+
+        Args:
+            start_date: Start date in YYYY-MM-DD format
+            end_date: End date in YYYY-MM-DD format
+
+        Returns:
+            True if successful, False otherwise
+        """
+        logger.info(f"Recalculating ALL statistics from {start_date} to {end_date}...")
+        logger.info("This will rebuild consistent statistics chain from InfluxDB data")
+
+        # Parse dates
+        start_dt = datetime.strptime(start_date, '%Y-%m-%d')
+        end_dt = datetime.strptime(end_date, '%Y-%m-%d')
+
+        # Calculate total days
+        total_days = (end_dt - start_dt).days + 1
+        logger.info(f"Processing {total_days} days of statistics...")
+
+        # Track statistics updated
+        total_stats_updated = 0
+
+        # Process each date in range
+        current_dt = start_dt
+        while current_dt <= end_dt:
+            date_str = current_dt.strftime('%Y-%m-%d')
+            logger.info(f"Processing date: {date_str}")
+
+            try:
+                with self.get_mariadb_connection() as conn:
+                    cursor = conn.cursor()
+
+                    # Get ALL statistics for this date, ordered by time
+                    query = """
+                        SELECT
+                            s.id,
+                            sm.statistic_id,
+                            s.start_ts,
+                            FROM_UNIXTIME(s.start_ts) as hour_start,
+                            s.sum as old_sum
+                        FROM statistics_meta sm
+                        JOIN statistics s ON sm.id = s.metadata_id
+                        WHERE sm.statistic_id LIKE %s
+                        AND DATE(FROM_UNIXTIME(s.start_ts)) = %s
+                        ORDER BY sm.statistic_id, s.start_ts
+                    """
+                    cursor.execute(query, (f'%{self.sensor_prefix}%daily%', date_str))
+                    results = cursor.fetchall()
+
+                    if not results:
+                        logger.info(f"  No statistics found for {date_str}")
+                        current_dt += timedelta(days=1)
+                        continue
+
+                    logger.info(f"  Found {len(results)} statistics to recalculate")
+
+                    # Process each statistic
+                    for stat_id, statistic_id, start_ts, hour_start, old_sum in results:
+                        # Determine sensor type from statistic_id
+                        sensor_type = None
+                        for stype in ['battery_charged_daily', 'battery_discharged_daily',
+                                     'grid_imported_daily', 'grid_exported_daily',
+                                     'home_usage_daily', 'solar_generated_daily']:
+                            if stype in statistic_id:
+                                sensor_type = stype
+                                break
+
+                        if not sensor_type:
+                            logger.warning(f"  Could not determine sensor type for {statistic_id}")
+                            continue
+
+                        # Calculate correct cumulative value from InfluxDB beginning
+                        # This is the TOTAL since sensor start, not just since midnight
+                        # CRITICAL: sum represents cumulative total at END of hour, not start
+                        hour_dt = datetime.fromtimestamp(start_ts) + timedelta(hours=1)
+                        correct_cumulative = self.get_influx_cumulative_value(sensor_type, hour_dt)
+
+                        # Update the statistic with recalculated cumulative value
+                        # Handle NULL old_sum values (treat as needing update)
+                        should_update = (old_sum is None or
+                                       abs(correct_cumulative - old_sum) > 0.001)
+
+                        if should_update:
+                            cursor.execute("UPDATE statistics SET sum = %s WHERE id = %s",
+                                         (correct_cumulative, stat_id))
+                            total_stats_updated += 1
+
+                            if total_stats_updated % 100 == 0:
+                                logger.info(f"  Updated {total_stats_updated} statistics so far...")
+
+                    conn.commit()
+                    logger.info(f"  Completed {date_str}")
+
+            except Exception as e:
+                logger.error(f"Error processing date {date_str}: {e}")
+                return False
+
+            current_dt += timedelta(days=1)
+
+        logger.info(f"Successfully recalculated {total_stats_updated} statistics across {total_days} days")
+        logger.info("Statistics chain rebuilt from consistent InfluxDB data")
+        return True
 
     def fix_spikes(self, date: str) -> bool:
         """Fix Energy Dashboard spikes by correcting problematic statistics with proper values."""
@@ -391,11 +485,18 @@ def main():
 Examples:
   # Analyze spikes for a specific date
   %(prog)s --mariadb-host 192.168.0.25 --mariadb-user homeassistant --mariadb-pass mypass \\
-           --mariadb-db ha_db --sensor-prefix 7579_pwd --analyze 2025-09-19
+           --mariadb-db ha_db --influx-host 192.168.0.10 --influx-db powerwall \\
+           --sensor-prefix 7579_pwd --analyze 2025-09-19
 
   # Fix spikes for a specific date
   %(prog)s --mariadb-host 192.168.0.25 --mariadb-user homeassistant --mariadb-pass mypass \\
-           --mariadb-db ha_db --sensor-prefix 7579_pwd --fix 2025-09-19
+           --mariadb-db ha_db --influx-host 192.168.0.10 --influx-db powerwall \\
+           --sensor-prefix 7579_pwd --fix 2025-09-19
+
+  # Recalculate ALL statistics for date range (fixes HA recorder confusion)
+  %(prog)s --mariadb-host 192.168.0.25 --mariadb-user homeassistant --mariadb-pass mypass \\
+           --mariadb-db ha_db --influx-host 192.168.0.10 --influx-db powerwall \\
+           --sensor-prefix 7579_pwd --fix-range 2025-05-06 2026-01-02
         """
     )
 
@@ -403,6 +504,8 @@ Examples:
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument('--analyze', metavar='DATE', help='Analyze Energy Dashboard spikes for date (YYYY-MM-DD)')
     mode_group.add_argument('--fix', metavar='DATE', help='Fix Energy Dashboard spikes for date (YYYY-MM-DD)')
+    mode_group.add_argument('--fix-range', nargs=2, metavar=('START_DATE', 'END_DATE'),
+                           help='Recalculate ALL statistics for date range (YYYY-MM-DD YYYY-MM-DD) - fixes HA recorder confusion')
 
     # MariaDB connection parameters
     parser.add_argument('--mariadb-host', required=True, help='MariaDB/MySQL host')
@@ -421,12 +524,21 @@ Examples:
     args = parser.parse_args()
 
     # Validate date format
-    date = args.analyze or args.fix
-    try:
-        datetime.strptime(date, '%Y-%m-%d')
-    except ValueError:
-        logger.error(f"Invalid date format: {date} (expected YYYY-MM-DD)")
-        sys.exit(1)
+    if args.fix_range:
+        start_date, end_date = args.fix_range
+        try:
+            datetime.strptime(start_date, '%Y-%m-%d')
+            datetime.strptime(end_date, '%Y-%m-%d')
+        except ValueError:
+            logger.error(f"Invalid date format (expected YYYY-MM-DD)")
+            sys.exit(1)
+    else:
+        date = args.analyze or args.fix
+        try:
+            datetime.strptime(date, '%Y-%m-%d')
+        except ValueError:
+            logger.error(f"Invalid date format: {date} (expected YYYY-MM-DD)")
+            sys.exit(1)
 
     # Build configuration
     mariadb_config = {
@@ -455,6 +567,39 @@ Examples:
             logger.info(f"Analyzing Energy Dashboard for date: {date}")
             spikes = fixer.analyze_spikes(date)
             sys.exit(0 if not spikes else 1)
+        elif args.fix_range:
+            # Safety confirmation for date range fix
+            start_date, end_date = args.fix_range
+            print("\n" + "="*70)
+            print("⚠️  WARNING: BULK DATABASE MODIFICATION")
+            print("="*70)
+            print(f"This will RECALCULATE ALL statistics from {start_date} to {end_date}.")
+            print("Every statistic sum will be rebuilt from InfluxDB cumulative totals.")
+            print("This fixes HA recorder confusion by creating a consistent statistics chain.")
+            print()
+            print("IMPORTANT:")
+            print("  1. Make sure Home Assistant is STOPPED")
+            print("  2. Backup your database first:")
+            print(f"     mysqldump -u {args.mariadb_user} -p {args.mariadb_db} > ha_backup_{start_date}_to_{end_date}.sql")
+            print("  3. You can restore from backup if needed:")
+            print(f"     mysql -u {args.mariadb_user} -p {args.mariadb_db} < ha_backup_{start_date}_to_{end_date}.sql")
+            print()
+            print("This operation will process ALL statistics in the date range,")
+            print("not just detected spikes. This ensures a consistent chain.")
+            print("="*70)
+            print()
+
+            confirm = input("Have you backed up your database and want to proceed? (yes/NO): ").lower().strip()
+            if confirm != 'yes':
+                logger.info("Operation cancelled - backup and retry when ready")
+                sys.exit(0)
+
+            success = fixer.recalculate_all_statistics(start_date, end_date)
+            if success:
+                logger.info("✓ Date range recalculation completed successfully")
+                logger.info("✓ Statistics chain rebuilt from consistent InfluxDB data")
+                logger.info("You can now restart Home Assistant")
+            sys.exit(0 if success else 1)
         elif args.fix:
             # Safety confirmation
             print("\n" + "="*70)

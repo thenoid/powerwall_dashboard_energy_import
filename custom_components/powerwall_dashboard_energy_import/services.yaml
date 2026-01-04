@@ -36,18 +36,18 @@ backfill:
       selector:
         boolean:
     start_hour:
-      name: Start hour (Advanced)
-      description: "Start hour for surgical backfill (0-23). Use for targeted hour-range repairs. Leave empty for full day."
-      example: 22
+      name: Start hour (Manual Surgical Repair)
+      description: "Start hour for targeted hour-range backfill (0-23). Use for manually fixing specific problematic hours. Leave empty for full day backfill."
+      example: 19
       selector:
         number:
           min: 0
           max: 23
           mode: box
     end_hour:
-      name: End hour (Advanced)
-      description: "End hour for surgical backfill (1-24). Use for targeted hour-range repairs. Leave empty for full day."
-      example: 23
+      name: End hour (Manual Surgical Repair)
+      description: "End hour for targeted hour-range backfill (1-24). Use for manually fixing specific problematic hours. Leave empty for full day backfill."
+      example: 20
       selector:
         number:
           min: 1
