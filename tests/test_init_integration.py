@@ -295,7 +295,14 @@ async def test_backfill_no_spook(
     call.hass = mock_hass
     call.data = {"start": "2024-01-01"}
 
-    mock_hass.async_add_executor_job.return_value = [1.0] * 24
+    def _executor_side_effect(func, *args, **kwargs):
+        if func == mock_influx_client.get_cumulative_kwh_before:
+            return 0.0
+        if func == mock_influx_client.get_hourly_kwh:
+            return [1.0] * 24
+        return None
+
+    mock_hass.async_add_executor_job.side_effect = _executor_side_effect
 
     await async_handle_backfill(call)
 
@@ -878,7 +885,14 @@ async def test_backfill_timezone_awareness(
     call.hass = mock_hass
     call.data = {"start": "2024-01-01"}
 
-    mock_hass.async_add_executor_job.return_value = [1.0] * 24
+    def _executor_side_effect(func, *args, **kwargs):
+        if func == mock_influx_client.get_cumulative_kwh_before:
+            return 0.0
+        if func == mock_influx_client.get_hourly_kwh:
+            return [1.0] * 24
+        return None
+
+    mock_hass.async_add_executor_job.side_effect = _executor_side_effect
 
     await async_handle_backfill(call)
 

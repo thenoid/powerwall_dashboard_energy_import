@@ -26,7 +26,7 @@ import argparse
 import logging
 import sys
 from datetime import datetime, timedelta
-from typing import List, Tuple, Dict, Any
+
 import mysql.connector
 import requests
 
@@ -40,7 +40,9 @@ logger = logging.getLogger(__name__)
 
 
 class EnergyDashboardSpikeFixer:
-    def __init__(self, mariadb_config: Dict[str, str], influx_config: Dict[str, str], sensor_prefix: str):
+    def __init__(
+        self, mariadb_config: dict[str, str], influx_config: dict[str, str], sensor_prefix: str
+    ):
         self.mariadb_config = mariadb_config
         self.influx_config = influx_config
         self.sensor_prefix = sensor_prefix
@@ -95,7 +97,7 @@ class EnergyDashboardSpikeFixer:
             logger.error(f"Failed to connect to MariaDB: {e}")
             raise
 
-    def find_spike_statistics(self, date: str) -> List[Tuple[int, str, str, float, float]]:
+    def find_spike_statistics(self, date: str) -> list[tuple[int, str, str, float, float]]:
         """Find statistics that cause Energy Dashboard spikes by detecting large jumps."""
         with self.get_mariadb_connection() as conn:
             cursor = conn.cursor()
@@ -334,7 +336,7 @@ class EnergyDashboardSpikeFixer:
                     logger.info(f"  Found {len(results)} statistics to recalculate")
 
                     # Process each statistic
-                    for stat_id, statistic_id, start_ts, hour_start, old_sum in results:
+                    for stat_id, statistic_id, start_ts, _hour_start, old_sum in results:
                         # Determine sensor type from statistic_id
                         sensor_type = None
                         for stype in ['battery_charged_daily', 'battery_discharged_daily',
@@ -464,7 +466,7 @@ class EnergyDashboardSpikeFixer:
         logger.info("Energy Dashboard spikes fixed with correct values. No restart needed.")
         return True
 
-    def analyze_spikes(self, date: str) -> List[Tuple[int, str, str, float, float]]:
+    def analyze_spikes(self, date: str) -> list[tuple[int, str, str, float, float]]:
         """Analyze and report Energy Dashboard spikes without fixing them."""
         logger.info(f"Analyzing Energy Dashboard spikes for {date}...")
         spikes = self.find_spike_statistics(date)
@@ -477,7 +479,7 @@ class EnergyDashboardSpikeFixer:
         return spikes
 
 
-def main():
+def main():  # noqa: C901
     parser = argparse.ArgumentParser(
         description="Fix Energy Dashboard spikes caused by Home Assistant TOTAL_INCREASING reset detection",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -530,7 +532,7 @@ Examples:
             datetime.strptime(start_date, '%Y-%m-%d')
             datetime.strptime(end_date, '%Y-%m-%d')
         except ValueError:
-            logger.error(f"Invalid date format (expected YYYY-MM-DD)")
+            logger.error("Invalid date format (expected YYYY-MM-DD)")
             sys.exit(1)
     else:
         date = args.analyze or args.fix
@@ -638,3 +640,4 @@ Examples:
 
 if __name__ == '__main__':
     main()
+

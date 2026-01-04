@@ -66,6 +66,8 @@ data:
   start: "2024-01-01"
   end: "2024-12-31"
   overwrite_existing: false    # Optional: append mode (default)
+  clear_short_term: false      # Optional: clear 5-min stats (keeps latest row)
+  repair_short_term_baseline: false  # Optional: align short-term baseline to long-term
 ```
 
 ### Key Differences

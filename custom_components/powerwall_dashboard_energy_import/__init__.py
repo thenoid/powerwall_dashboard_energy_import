@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import zoneinfo
 from datetime import date, datetime, time, timedelta, timezone
+from typing import Any, cast
 
 # Recorder imports removed - we now use Spook's service instead
 from homeassistant.config_entries import ConfigEntry, OptionsFlow
