@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta  # noqa: F401
 from typing import Any
 
 from homeassistant.components.sensor import (
