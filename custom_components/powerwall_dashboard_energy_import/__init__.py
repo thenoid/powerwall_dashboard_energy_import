@@ -100,6 +100,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
     end_str = call.data.get("end")
     sensor_prefix = call.data.get("sensor_prefix")
     overwrite_existing = call.data.get("overwrite_existing", False)
+    clear_short_term = call.data.get("clear_short_term", False)
+    repair_short_term_baseline = call.data.get("repair_short_term_baseline", False)
 
     # Hour range parameters for surgical backfills
     start_hour = call.data.get("start_hour")
@@ -112,6 +114,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
         end_str,
         sensor_prefix,
         overwrite_existing,
+        clear_short_term,
+        repair_short_term_baseline,
         start_hour,
         end_hour,
     )
@@ -291,6 +295,31 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 end_date.isoformat(),
             )
 
+        cutoff_dt = datetime.combine(start_date, time.min, tzinfo=tz).astimezone(
+            timezone.utc
+        )
+        cutoff_iso = cutoff_dt.isoformat().replace("+00:00", "Z")
+        try:
+            cumulative_base = await hass.async_add_executor_job(
+                client.get_cumulative_kwh_before,
+                influx_field,
+                cutoff_iso,
+                series_source,
+            )
+            _LOGGER.info(
+                "Influx baseline for %s before %s: %.3f kWh",
+                entity_id,
+                cutoff_iso,
+                cumulative_base,
+            )
+        except Exception as e:
+            _LOGGER.warning(
+                "Influx baseline lookup failed for %s: %s, using 0.0",
+                entity_id,
+                e,
+            )
+            cumulative_base = 0.0
+
         if should_overwrite:
             _LOGGER.warning(
                 "Overwrite enabled - clearing existing statistics for %s from %s to %s",
@@ -298,105 +327,6 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 start_date,
                 end_date,
             )
-
-            # Get the cumulative base BEFORE purging to maintain continuity
-            try:
-                from datetime import timedelta
-
-                # Get statistics from just before the start date
-                # We want the cumulative value at the end of the day BEFORE start_date
-                end_of_previous_day = datetime.combine(
-                    start_date - timedelta(days=1), datetime.max.time()
-                )
-                end_of_previous_day = end_of_previous_day.replace(tzinfo=tz)
-
-                # Query statistics up to end of previous day
-                from typing import Any, cast
-
-                # FIRST HOUR BOUNDARY FIX: Preserve existing cumulative baseline to prevent massive backwards jumps
-                # Instead of forcing HA alignment (which causes 5000+ kWh backwards jumps), preserve
-                # the existing statistical baseline from before our backfill period starts
-
-                try:
-                    # Get the LAST statistic BEFORE our backfill start date to preserve existing baseline
-                    # This prevents massive backwards jumps at the first hour of backfill
-                    # We need to query database directly since get_last_statistics returns the most recent, not before a date
-                    from homeassistant.components.recorder.statistics import (
-                        get_last_statistics,
-                        statistics_during_period,
-                    )
-
-                    # Get all statistics up to the day before backfill start
-                    end_time = datetime.combine(
-                        start_date, time.min, tzinfo=tz
-                    ) - timedelta(seconds=1)
-                    start_time = end_time - timedelta(days=30)  # Look back 30 days max
-
-                    baseline_stats = await hass.async_add_executor_job(
-                        statistics_during_period,  # type: ignore[arg-type]
-                        hass,
-                        start_time,
-                        end_time,
-                        [entity_id],
-                        "hour",
-                        {"sum"},
-                        {"sum"},
-                    )
-
-                    if (
-                        baseline_stats
-                        and entity_id in baseline_stats
-                        and baseline_stats[entity_id]
-                    ):
-                        # Find the LAST statistic before our backfill start (latest timestamp)
-                        entity_stats = baseline_stats[entity_id]
-                        if entity_stats:
-                            last_baseline_stat = entity_stats[
-                                -1
-                            ]  # Last entry is most recent
-                            if (
-                                "sum" in last_baseline_stat
-                                and last_baseline_stat["sum"] is not None
-                            ):
-                                cumulative_base = float(last_baseline_stat["sum"])
-                                baseline_time = last_baseline_stat.get(
-                                    "start", "unknown"
-                                )
-                                _LOGGER.warning(
-                                    "BASELINE PRESERVATION: Found existing baseline %.3f kWh at %s (before backfill start) - preserving to prevent backwards jumps",
-                                    cumulative_base,
-                                    baseline_time,
-                                )
-                            else:
-                                cumulative_base = 0.0
-                                _LOGGER.warning(
-                                    "BASELINE PRESERVATION: Found baseline stat but no sum value, using cumulative_base=0.0"
-                                )
-                        else:
-                            cumulative_base = 0.0
-                            _LOGGER.warning(
-                                "BASELINE PRESERVATION: No baseline statistics found in period, using cumulative_base=0.0"
-                            )
-                    else:
-                        cumulative_base = 0.0
-                        _LOGGER.warning(
-                            "BASELINE PRESERVATION: No existing statistics found before backfill, using cumulative_base=0.0"
-                        )
-
-                except Exception as e:
-                    _LOGGER.warning(
-                        "BASELINE PRESERVATION: Failed to get existing baseline: %s, using cumulative_base=0.0",
-                        e,
-                    )
-                    cumulative_base = 0.0
-
-            except Exception as e:
-                _LOGGER.warning(
-                    "HA ALIGNMENT: Could not analyze cumulative base alignment for %s: %s, using 0.0",
-                    entity_id,
-                    e,
-                )
-                cumulative_base = 0.0
 
             # Now purge the existing statistics
             try:
@@ -418,75 +348,6 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                     "Failed to clear existing statistics for %s: %s", entity_id, e
                 )
                 return
-        else:
-            # Get the last cumulative value before start_date to maintain continuity
-            try:
-                # Query the last statistic before our start date
-                from datetime import timedelta
-                from typing import Any, cast
-
-                from homeassistant.components.recorder.statistics import (
-                    get_last_statistics,
-                    statistics_during_period,
-                )
-
-                # Get all statistics up to the day before backfill start
-                end_time = datetime.combine(
-                    start_date, time.min, tzinfo=tz
-                ) - timedelta(seconds=1)
-                start_time = end_time - timedelta(days=30)  # Look back 30 days max
-
-                baseline_stats = await hass.async_add_executor_job(
-                    statistics_during_period,  # type: ignore[arg-type]
-                    hass,
-                    start_time,
-                    end_time,
-                    [entity_id],
-                    "hour",
-                    {"sum"},
-                    {"sum"},
-                )
-
-                if (
-                    baseline_stats
-                    and entity_id in baseline_stats
-                    and baseline_stats[entity_id]
-                ):
-                    # Find the LAST statistic before our backfill start (latest timestamp)
-                    entity_stats = baseline_stats[entity_id]
-                    if entity_stats:
-                        last_baseline_stat = entity_stats[
-                            -1
-                        ]  # Last entry is most recent
-                        if (
-                            "sum" in last_baseline_stat
-                            and last_baseline_stat["sum"] is not None
-                        ):
-                            cumulative_base = float(last_baseline_stat["sum"])
-                            baseline_time = last_baseline_stat.get("start", "unknown")
-                            _LOGGER.info(
-                                "APPEND MODE: Found existing cumulative base: %.3f kWh at %s (before backfill start)",
-                                cumulative_base,
-                                baseline_time,
-                            )
-                        else:
-                            cumulative_base = 0.0
-                            _LOGGER.warning(
-                                "APPEND MODE: Found baseline stat but no sum value, using cumulative_base=0.0"
-                            )
-                    else:
-                        cumulative_base = 0.0
-                        _LOGGER.warning(
-                            "APPEND MODE: No baseline statistics found in period, using cumulative_base=0.0"
-                        )
-
-            except Exception as e:
-                _LOGGER.warning(
-                    "Could not get existing cumulative base for %s, starting from 0: %s",
-                    entity_id,
-                    e,
-                )
-                cumulative_base = 0.0
 
         current_date: date = start_date
         while current_date <= end_date:
@@ -584,10 +445,8 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                     # Calculate cumulative total at this hour
                     cumulative_at_hour = cumulative_base + cumulative_progress
 
-                    # CRITICAL FIX: Add STATE field to coordinate with HA's TOTAL_INCREASING calculation
-                    # For daily sensors, state represents the sensor reading (cumulative since midnight)
-                    # This aligns our statistics with how live sensors report their state
-                    sensor_state = cumulative_progress  # Daily total since midnight (not lifetime cumulative)
+                    # Keep state aligned with sum to avoid recorder baseline resets
+                    sensor_state = cumulative_at_hour
 
                     stats.append(
                         {
@@ -710,9 +569,11 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                                             if stat["sum"] is not None
                                             else 0.0
                                         )
-                                        stat["sum"] = max(
+                                        adjusted_sum = max(
                                             0.0, current_sum - discontinuity
                                         )
+                                        stat["sum"] = adjusted_sum
+                                        stat["state"] = adjusted_sum
 
                                     _LOGGER.warning(
                                         "SMART BOUNDARY SYNC: Applied %.3f kWh downward adjustment to align with live data. Final sum: %.3f → %.3f kWh",
@@ -752,6 +613,128 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                     "The built-in HA statistics API cannot import data for entities with state_class set."
                 )
                 continue
+
+            if clear_short_term:
+                def _clear_short_term_stats(stat_id: str) -> int:
+                    from homeassistant.components.recorder import get_instance
+                    from homeassistant.components.recorder.db_schema import (
+                        StatisticsMeta,
+                        StatisticsShortTerm,
+                    )
+                    from homeassistant.components.recorder.util import session_scope
+
+                    instance = get_instance(hass)
+                    with session_scope(session=instance.get_session()) as session:
+                        meta_id = (
+                            session.query(StatisticsMeta.id)
+                            .filter(StatisticsMeta.statistic_id == stat_id)
+                            .scalar()
+                        )
+                        if meta_id is None:
+                            return 0
+                        latest_id = (
+                            session.query(StatisticsShortTerm.id)
+                            .filter(StatisticsShortTerm.metadata_id == meta_id)
+                            .order_by(StatisticsShortTerm.start_ts.desc())
+                            .limit(1)
+                            .scalar()
+                        )
+                        delete_query = session.query(StatisticsShortTerm).filter(
+                            StatisticsShortTerm.metadata_id == meta_id
+                        )
+                        if latest_id is not None:
+                            delete_query = delete_query.filter(
+                                StatisticsShortTerm.id != latest_id
+                            )
+                        return delete_query.delete(synchronize_session=False)
+
+                try:
+                    deleted = await hass.async_add_executor_job(
+                        _clear_short_term_stats, entity_id
+                    )
+                    _LOGGER.warning(
+                        "Cleared %d short-term statistics rows for %s",
+                        deleted,
+                        entity_id,
+                    )
+                except Exception as e:
+                    _LOGGER.error(
+                        "Failed to clear short-term statistics for %s: %s",
+                        entity_id,
+                        e,
+                    )
+
+            if repair_short_term_baseline:
+                def _repair_short_term_baseline(stat_id: str) -> bool:
+                    from homeassistant.components.recorder import get_instance
+                    from homeassistant.components.recorder.db_schema import (
+                        Statistics,
+                        StatisticsMeta,
+                        StatisticsShortTerm,
+                    )
+                    from homeassistant.components.recorder.util import session_scope
+
+                    instance = get_instance(hass)
+                    with session_scope(session=instance.get_session()) as session:
+                        meta_id = (
+                            session.query(StatisticsMeta.id)
+                            .filter(StatisticsMeta.statistic_id == stat_id)
+                            .scalar()
+                        )
+                        if meta_id is None:
+                            return False
+
+                        latest_long = (
+                            session.query(Statistics.sum, Statistics.start_ts)
+                            .filter(Statistics.metadata_id == meta_id)
+                            .order_by(Statistics.start_ts.desc())
+                            .limit(1)
+                            .first()
+                        )
+                        if not latest_long or latest_long[0] is None:
+                            return False
+
+                        latest_short_id = (
+                            session.query(StatisticsShortTerm.id)
+                            .filter(StatisticsShortTerm.metadata_id == meta_id)
+                            .order_by(StatisticsShortTerm.start_ts.desc())
+                            .limit(1)
+                            .scalar()
+                        )
+                        if latest_short_id is None:
+                            return False
+
+                        session.query(StatisticsShortTerm).filter(
+                            StatisticsShortTerm.id == latest_short_id
+                        ).update(
+                            {
+                                StatisticsShortTerm.sum: latest_long[0],
+                                StatisticsShortTerm.state: latest_long[0],
+                            },
+                            synchronize_session=False,
+                        )
+                        return True
+
+                try:
+                    repaired = await hass.async_add_executor_job(
+                        _repair_short_term_baseline, entity_id
+                    )
+                    if repaired:
+                        _LOGGER.warning(
+                            "Repaired short-term baseline for %s",
+                            entity_id,
+                        )
+                    else:
+                        _LOGGER.warning(
+                            "No short-term baseline repair applied for %s",
+                            entity_id,
+                        )
+                except Exception as e:
+                    _LOGGER.error(
+                        "Failed to repair short-term baseline for %s: %s",
+                        entity_id,
+                        e,
+                    )
 
             # Overwrite logic has been moved to before statistics calculation
 

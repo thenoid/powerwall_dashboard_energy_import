@@ -35,6 +35,18 @@ backfill:
       default: false
       selector:
         boolean:
+    clear_short_term:
+      name: Clear short-term statistics
+      description: "Delete 5-minute statistics for the targeted sensors before backfilling, keeping the most recent row so recorder baseline stays intact."
+      default: false
+      selector:
+        boolean:
+    repair_short_term_baseline:
+      name: Repair short-term baseline
+      description: "Align the most recent 5-minute statistics sum/state with the latest long-term sum to prevent hourly rollovers from dropping to near-zero."
+      default: false
+      selector:
+        boolean:
     start_hour:
       name: Start hour (Manual Surgical Repair)
       description: "Start hour for targeted hour-range backfill (0-23). Use for manually fixing specific problematic hours. Leave empty for full day backfill."

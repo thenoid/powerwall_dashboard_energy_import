@@ -90,6 +90,17 @@ class InfluxClient:
         result = self.query(query)
         return round(result[0].get("value", 0.0), 3) if result else 0.0
 
+    def get_cumulative_kwh_before(
+        self, field: str, cutoff: str, series: str
+    ) -> float:
+        """Fetch the cumulative kWh for a field before an ISO timestamp."""
+        query = (
+            f"SELECT integral({field})/1000/3600 AS value FROM {series} "
+            f"WHERE time < '{cutoff}' AND {field} > 0"
+        )
+        result = self.query(query)
+        return round(result[0].get("value", 0.0), 3) if result else 0.0
+
     def get_hourly_kwh(
         self, field: str, day: date, series: str, target_timezone: str = "UTC"
     ) -> list[float]:
