@@ -616,6 +616,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                 continue
 
             if clear_short_term:
+
                 def _clear_short_term_stats(stat_id: str) -> int:
                     from homeassistant.components.recorder import get_instance
                     from homeassistant.components.recorder.db_schema import (
@@ -666,6 +667,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                     )
 
             if repair_short_term_baseline:
+
                 def _repair_short_term_baseline(stat_id: str) -> bool:
                     from homeassistant.components.recorder import get_instance
                     from homeassistant.components.recorder.db_schema import (
@@ -763,7 +765,7 @@ async def async_handle_backfill(call: ServiceCall):  # noqa: C901
                         )
                         for j, stat_dict in enumerate(batch[:3]):
                             # stat_dict is a dict with statistics data
-                            start_time = stat_dict["start"]  # type: ignore[assignment]
+                            start_time = stat_dict["start"]
                             sum_value = (
                                 float(stat_dict["sum"])  # type: ignore[arg-type]
                                 if stat_dict["sum"] is not None
