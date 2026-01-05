@@ -900,6 +900,142 @@ async def test_backfill_timezone_awareness(
     assert True
 
 
+@pytest.mark.asyncio
+async def test_backfill_stats_sum_state_alignment(
+    mock_hass, mock_config_entry, mock_influx_client, mock_entity_registry, monkeypatch
+):
+    """Test that backfill writes sum and state aligned."""
+    mock_hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            "client": mock_influx_client,
+            "config": mock_config_entry.data,
+            "pw_name": "test_powerwall",
+        }
+    }
+    mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+    mock_hass.services.has_service.return_value = True
+
+    monkeypatch.setattr(
+        "custom_components.powerwall_dashboard_energy_import.BACKFILL_FIELDS",
+        {"home_usage_daily": "home"},
+    )
+
+    call = Mock(spec=ServiceCall)
+    call.hass = mock_hass
+    call.data = {"start": "2024-01-01", "end": "2024-01-01"}
+
+    def _executor_side_effect(func, *args, **kwargs):
+        if func == mock_influx_client.get_cumulative_kwh_before:
+            return 0.0
+        if func == mock_influx_client.get_hourly_kwh:
+            return [1.0] * 24
+        return None
+
+    mock_hass.async_add_executor_job.side_effect = _executor_side_effect
+
+    await async_handle_backfill(call)
+
+    import_calls = [
+        call_args
+        for call_args in mock_hass.services.async_call.call_args_list
+        if call_args.args[1] == "import_statistics"
+    ]
+    assert import_calls
+    stats = import_calls[0].args[2]["stats"]
+    assert stats
+    assert all(stat["sum"] == stat["state"] for stat in stats)
+
+
+@pytest.mark.asyncio
+async def test_backfill_clear_short_term_calls_executor(
+    mock_hass, mock_config_entry, mock_influx_client, mock_entity_registry, monkeypatch
+):
+    """Test that clear_short_term triggers short-term cleanup."""
+    mock_hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            "client": mock_influx_client,
+            "config": mock_config_entry.data,
+            "pw_name": "test_powerwall",
+        }
+    }
+    mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+    mock_hass.services.has_service.return_value = True
+
+    monkeypatch.setattr(
+        "custom_components.powerwall_dashboard_energy_import.BACKFILL_FIELDS",
+        {"home_usage_daily": "home"},
+    )
+
+    call = Mock(spec=ServiceCall)
+    call.hass = mock_hass
+    call.data = {"start": "2024-01-01", "end": "2024-01-01", "clear_short_term": True}
+
+    def _executor_side_effect(func, *args, **kwargs):
+        if getattr(func, "__name__", "") == "_clear_short_term_stats":
+            return 0
+        if func == mock_influx_client.get_cumulative_kwh_before:
+            return 0.0
+        if func == mock_influx_client.get_hourly_kwh:
+            return [1.0] * 24
+        return None
+
+    mock_hass.async_add_executor_job.side_effect = _executor_side_effect
+
+    await async_handle_backfill(call)
+
+    assert any(
+        getattr(call_args.args[0], "__name__", "") == "_clear_short_term_stats"
+        for call_args in mock_hass.async_add_executor_job.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_repair_short_term_baseline_calls_executor(
+    mock_hass, mock_config_entry, mock_influx_client, mock_entity_registry, monkeypatch
+):
+    """Test that repair_short_term_baseline triggers baseline repair."""
+    mock_hass.data[DOMAIN] = {
+        mock_config_entry.entry_id: {
+            "client": mock_influx_client,
+            "config": mock_config_entry.data,
+            "pw_name": "test_powerwall",
+        }
+    }
+    mock_hass.config_entries.async_entries.return_value = [mock_config_entry]
+    mock_hass.services.has_service.return_value = True
+
+    monkeypatch.setattr(
+        "custom_components.powerwall_dashboard_energy_import.BACKFILL_FIELDS",
+        {"home_usage_daily": "home"},
+    )
+
+    call = Mock(spec=ServiceCall)
+    call.hass = mock_hass
+    call.data = {
+        "start": "2024-01-01",
+        "end": "2024-01-01",
+        "repair_short_term_baseline": True,
+    }
+
+    def _executor_side_effect(func, *args, **kwargs):
+        if getattr(func, "__name__", "") == "_repair_short_term_baseline":
+            return True
+        if func == mock_influx_client.get_cumulative_kwh_before:
+            return 0.0
+        if func == mock_influx_client.get_hourly_kwh:
+            return [1.0] * 24
+        return None
+
+    mock_hass.async_add_executor_job.side_effect = _executor_side_effect
+
+    await async_handle_backfill(call)
+
+    assert any(
+        getattr(call_args.args[0], "__name__", "") == "_repair_short_term_baseline"
+        for call_args in mock_hass.async_add_executor_job.call_args_list
+    )
+
+
 # Simple tests to hit sensor_prefix code paths
 @pytest.mark.asyncio
 async def test_backfill_sensor_prefix_match_and_nomatch():
