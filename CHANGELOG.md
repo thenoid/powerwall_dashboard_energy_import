@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.17.1 — 2026-01-13
+- Add signed battery and grid power sensors for HA +/- power support
+- Signed values are calculated as `from_pw - to_pw` (battery) and `from_grid - to_grid` (grid)
+
 ## 0.13.0 — 2026-01-03
 - **CRITICAL FIX**: Sensors now report cumulative totals from InfluxDB beginning instead of daily/monthly resets
 - **Breaking Change**: This fixes HA recorder confusion that caused cascading spikes and ancient baseline fallbacks

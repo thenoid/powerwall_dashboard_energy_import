@@ -94,10 +94,30 @@ SENSOR_DEFINITIONS = (
             SensorStateClass.MEASUREMENT,
         ),
         (
+            "battery_power_signed",
+            "Battery Power (Signed)",
+            "battery_combo",
+            "last_kw_signed_battery",
+            UnitOfPower.KILO_WATT,
+            "mdi:battery-charging",
+            SensorDeviceClass.POWER,
+            SensorStateClass.MEASUREMENT,
+        ),
+        (
             "grid_power",
             "Grid Power",
             "grid_combo",
             "last_kw_combo_grid",
+            UnitOfPower.KILO_WATT,
+            "mdi:transmission-tower",
+            SensorDeviceClass.POWER,
+            SensorStateClass.MEASUREMENT,
+        ),
+        (
+            "grid_power_signed",
+            "Grid Power (Signed)",
+            "grid_combo",
+            "last_kw_signed_grid",
             UnitOfPower.KILO_WATT,
             "mdi:transmission-tower",
             SensorDeviceClass.POWER,
@@ -287,6 +307,15 @@ class PowerwallDashboardSensor(SensorEntity):
             self._attr_native_value = round(max(chg, dis) / 1000.0, 3)
             return
 
+        if self._mode == "last_kw_signed_battery":
+            pts = self._influx.query(
+                f"SELECT LAST(to_pw) AS chg, LAST(from_pw) AS dis FROM {series}"
+            )
+            chg = (pts[0].get("chg") if pts else 0) or 0
+            dis = (pts[0].get("dis") if pts else 0) or 0
+            self._attr_native_value = round((dis - chg) / 1000.0, 3)
+            return
+
         if self._mode == "last_kw_combo_grid":
             pts = self._influx.query(
                 f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}"
@@ -294,6 +323,15 @@ class PowerwallDashboardSensor(SensorEntity):
             exp = (pts[0].get("exp") if pts else 0) or 0
             imp = (pts[0].get("imp") if pts else 0) or 0
             self._attr_native_value = round(max(exp, imp) / 1000.0, 3)
+            return
+
+        if self._mode == "last_kw_signed_grid":
+            pts = self._influx.query(
+                f"SELECT LAST(to_grid) AS exp, LAST(from_grid) AS imp FROM {series}"
+            )
+            exp = (pts[0].get("exp") if pts else 0) or 0
+            imp = (pts[0].get("imp") if pts else 0) or 0
+            self._attr_native_value = round((imp - exp) / 1000.0, 3)
             return
 
         if self._mode == "last" and self._field == "percentage":
