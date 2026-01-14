@@ -355,7 +355,9 @@ data:
 - **Home Usage (kWh)** — integral of `home` since midnight.
 - **Solar Generated (kWh)** — integral of `solar` since midnight.
 - **Battery Power (kW)** — last of `to_pw` (proxy for charge power) and `from_pw` (discharge) reflected via state.
+- **Battery Power (Signed kW)** — `(from_pw - to_pw)`; positive is discharging, negative is charging.
 - **Grid Power (kW)** — last of `from_grid` (consumption) or `to_grid` (export) reflected via state.
+- **Grid Power (Signed kW)** — `(from_grid - to_grid)`; positive is importing, negative is exporting.
 - **Load Power (kW)** — last of `home` instantaneous.
 - **Solar Power (kW)** — last of `solar` instantaneous.
 - **Battery % Charged (%)** — last of `percentage`.
